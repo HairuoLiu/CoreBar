@@ -1,0 +1,13 @@
+# 构建产物
+MacMonBar.app/
+*.o
+*.dSYM/
+*.dylib
+
+# 由 tools/*.swift 编译出来的测试工具（保留源码，不保留二进制）
+tools/coretest
+tools/cputest
+tools/machsampler
+
+# 系统垃圾
+.DS_Store
