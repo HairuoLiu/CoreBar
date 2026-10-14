@@ -57,7 +57,7 @@ Same panel in dark mode:
 
 - macOS 13.0 or later, Apple Silicon (Intel is not supported — a menu-bar meter is pointless there).
 - Xcode Command Line Tools (`swiftc`).
-- [macmon](https://github.com/vladkens/macmon) installed at `~/.local/bin/macmon` — it supplies GPU, memory and temperature. CPU utilization and per-core data do **not** depend on it.
+- [macmon](https://github.com/vladkens/macmon) installed at `~/.local/bin/macmon`. **This is a hard requirement, not an optional extra.** MacMonBar contains zero lines of macmon's code — it is a clean-room Swift reimplementation — but it shells out to the `macmon` binary at runtime for GPU, memory and temperature, and the JSON stream is also what drives the sampling clock. Without macmon nothing updates at all: the meter sits at 0 % forever. (Verified: with macmon absent, `apply` is never called and the status bar draws exactly once.)
 
 ## Build and run
 
@@ -119,6 +119,37 @@ RunLoop.main.add(t, forMode: .common)
 ```
 
 After the fix the same 25-second window yields `bg=24 main=24 panelDraw=23` — the panel genuinely rasterizes once per second while the menu is open. This is also why the power numbers below are believable: the drawing work is real, not skipped.
+
+## Relationship to macmon
+
+Everyone asks this, so it gets its own section: **no macmon code is used.** Not a fork, not a vendored library, not a linked dependency. MacMonBar is 543 lines of Swift written from scratch; macmon is written in Rust. There is no Rust anywhere in this repository, and nothing here calls into it.
+
+The entire relationship is that MacMonBar spawns `macmon pipe -i <interval>` as a child process and reads its JSON.
+
+| Metric | Where the number comes from | macmon's code? |
+|---|---|---|
+| CPU utilization | `CPUCoreSampler` → Mach `host_processor_info` (Apple API) | No |
+| Per-core utilization | same sampler | No |
+| GPU utilization | `gpu_scaled_ratio` in macmon's JSON | No — but computed by the macmon binary |
+| Memory % | `ram_usage` / `ram_total` in macmon's JSON | No |
+| Temperature | `cpu_temp_avg` in macmon's JSON | No |
+
+### Why the dependency stays
+
+Two of the four metrics are trivial to replace natively. Two are not.
+
+| Metric | Native replacement | Effort |
+|---|---|---|
+| CPU / per-core | already native | done |
+| Memory | `host_statistics64` + `vm_statistics64` | ~30 lines, easy |
+| GPU utilization | IOReport private framework | hard, breaks across OS releases |
+| Temperature | no public API — IOHID / SMC | hard, breaks across OS releases |
+
+The two hard ones are precisely what macmon already solves, and they are precisely the ones that break on every macOS update. Reimplementing them would trade a 9 MiB child process for a permanent maintenance burden — and would make the app *less* reliable, not more.
+
+The name stays for the same reason: `MacMonBar` says what it is, a menu bar for macmon. Renaming it while still shelling out to macmon would be less honest, not more.
+
+(Licensing-wise there is no obligation either way: MIT only requires the notice be retained in copies of *the software*, and none of it ships here. macmon is credited anyway.)
 
 ## Measured resource usage
 

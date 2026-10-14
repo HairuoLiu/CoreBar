@@ -57,7 +57,7 @@
 
 - macOS 13.0 及以上，Apple Silicon（不支持 Intel——在 Intel 上做一个菜单栏功耗监控没有意义）。
 - Xcode Command Line Tools（需要 `swiftc`）。
-- [macmon](https://github.com/vladkens/macmon) 装在 `~/.local/bin/macmon`——它提供 GPU、内存和温度。**CPU 占用率和逐核数据不依赖它。**
+- [macmon](https://github.com/vladkens/macmon) 装在 `~/.local/bin/macmon`。**这是硬性前置条件，不是可选组件。** MacMonBar 不含 macmon 的任何一行代码——它是用 Swift 重新实现的——但运行时确实要调 `macmon` 这个二进制来拿 GPU、内存和温度，而且这条 JSON 流同时是整个 App 的采样时钟。没有 macmon 就完全不会更新：状态栏会一直停在 0%。（实测：macmon 缺失时 `apply` 一次都不会被调用，状态栏只画 1 次。）
 
 ## 构建与运行
 
@@ -119,6 +119,37 @@ RunLoop.main.add(t, forMode: .common)
 ```
 
 改完之后同样的 25 秒窗口变成 `bg=24 main=24 panelDraw=23`——面板在菜单展开期间是实打实每秒光栅化一次的。这也是下面功耗数字可信的原因：绘制的活是真的干了，没有被跳过。
+
+## 和 macmon 到底是什么关系
+
+这个问题人人都会问，所以单开一节：**没有使用 macmon 的任何代码。** 不是 fork、不是内嵌库、不是链接依赖。MacMonBar 是 543 行从零写的 Swift；macmon 是 Rust 写的。这个仓库里没有 Rust，也没有任何地方调用它的代码。
+
+全部关系就是：MacMonBar 把 `macmon pipe -i <interval>` 拉成子进程，读它的 JSON。
+
+| 指标 | 数字来自哪里 | 用了 macmon 的代码？ |
+|---|---|---|
+| CPU 占用率 | `CPUCoreSampler` → Mach `host_processor_info`（Apple API） | 否 |
+| 逐核占用率 | 同一个采样器 | 否 |
+| GPU 占用率 | macmon JSON 里的 `gpu_scaled_ratio` | 否——但是由 macmon 这个二进制算出来的 |
+| 内存 % | macmon JSON 里的 `ram_usage` / `ram_total` | 否 |
+| 温度 | macmon JSON 里的 `cpu_temp_avg` | 否 |
+
+### 为什么保留这个依赖
+
+四项指标里，两项换成原生很容易，两项很难。
+
+| 指标 | 原生替代方案 | 工作量 |
+|---|---|---|
+| CPU / 逐核 | 已经是原生 | 已完成 |
+| 内存 | `host_statistics64` + `vm_statistics64` | 约 30 行，容易 |
+| GPU 占用率 | IOReport 私有框架 | 难，且每次系统升级都可能失效 |
+| 温度 | 没有公开 API——IOHID / SMC | 难，且每次系统升级都可能失效 |
+
+难的两项恰好就是 macmon 已经解决的部分，也恰好是每次 macOS 更新都会崩的部分。自己重新实现，等于用一个 9 MiB 的子进程换一份长期的维护负担——而且会让 App 变得更不可靠，不是更可靠。
+
+名字保留也是同一个道理：`MacMonBar` 说清楚了自己是什么——macmon 的菜单栏。一边还在调 macmon 的二进制、一边把名字里的 macmon 拿掉，那是更不诚实，不是更干净。
+
+（许可证上没有义务：MIT 只要求在*软件副本*中保留声明，而这里一行都没带。但致谢照样给。）
 
 ## 实测资源占用
 
