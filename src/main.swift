@@ -4,18 +4,11 @@ import Darwin
 
 // MacMonBar — 菜单栏版 macmon
 //
-// 状态栏：CPU / GPU / RAM 百分比 + 温度（默认关闭）；指标间用细竖线分隔
-//          状态栏标签固定英文；菜单与面板文案按系统语言中英双语（见 Loc）
-//          进度条默认关闭（菜单可开启）；百分比按占用率着色默认开启（绿<50% / 琥珀50-80% / 红≥80%）
-//          状态栏标签 13pt semibold（与系统菜单栏同字号），在预留位内居中
-// 面板：四项趋势图，2 行 × 2 列；底部默认显示 12 个核的逐核柱状图（可关）
-// 配色分两套互不重叠的色系（见下方 MARK）：
-//          图表用身份色（CPU 蓝 / GPU 玫红 / 内存青 / 温度紫，刻意避开绿琥珀红）；
-//          数值用绿/琥珀/红梯度（百分比 <50/≥50/≥80%，温度 <60/≥60/≥80°C）
-//
-// 数据来源：
-//   · CPU 占用率 —— 本 App 自己用 Mach host_processor_info 统计全部 12 核
-//   · GPU / 内存 / 温度 —— 常驻的 `macmon pipe` 子进程
+// 状态栏：CPU / GPU / RAM 百分比 + 温度（默认关闭）；标签固定英文，菜单与面板按系统中英双语（见 Loc）
+// 面板：四项趋势图 2 × 2，底部逐核柱状图（可关）
+// 配色两套互不重叠（见下方 MARK）：图表用身份色（蓝 / 玫红 / 青 / 紫），数值用绿 / 琥珀 / 红梯度
+// 数据来源：CPU 与逐核由本 App 自己用 Mach 采样；GPU / 内存 / 温度来自 `macmon pipe` 子进程
+// 细节（默认开关、阈值、实测宽度）见 README 与 docs/
 
 // MARK: - 基础工具
 
@@ -353,13 +346,16 @@ final class PanelView: NSView {
         NSColor.labelColor.withAlphaComponent(0.06).setFill()
         NSBezierPath(roundedRect: chart, xRadius: 4, yRadius: 4).fill()
 
-        let dash = NSBezierPath()
-        dash.move(to: NSPoint(x: chart.minX + 2, y: chart.midY.rounded() + 0.5))
-        dash.line(to: NSPoint(x: chart.maxX - 2, y: chart.midY.rounded() + 0.5))
-        dash.lineWidth = 1
-        dash.setLineDash([2, 2], count: 2, phase: 0)
-        NSColor.labelColor.withAlphaComponent(0.14).setStroke()
-        dash.stroke()
+        // 50% 参考线只对百分比有意义；温度图是 (t-30)/70 归一化的，midY 不代表任何温度
+        if unit == "%" {
+            let dash = NSBezierPath()
+            dash.move(to: NSPoint(x: chart.minX + 2, y: chart.midY.rounded() + 0.5))
+            dash.line(to: NSPoint(x: chart.maxX - 2, y: chart.midY.rounded() + 0.5))
+            dash.lineWidth = 1
+            dash.setLineDash([2, 2], count: 2, phase: 0)
+            NSColor.labelColor.withAlphaComponent(0.14).setStroke()
+            dash.stroke()
+        }
 
         guard data.count > 1 else { return }
         let step = (chart.width - 4) / CGFloat(data.count - 1)
@@ -373,7 +369,8 @@ final class PanelView: NSView {
         for p in pts { area.line(to: p) }
         area.line(to: NSPoint(x: pts[pts.count - 1].x, y: chart.minY + 1))
         area.close()
-        series.withAlphaComponent(isDark(self) ? 0.22 : 0.18).setFill()
+        // 29pt 高的小图上，填充太浓会把整格糊住，看不出线条起伏
+        series.withAlphaComponent(isDark(self) ? 0.16 : 0.12).setFill()
         area.fill()
 
         let line = NSBezierPath()
@@ -383,10 +380,7 @@ final class PanelView: NSView {
         line.lineJoinStyle = .round
         series.setStroke()
         line.stroke()
-
-        let last = pts[pts.count - 1]
-        series.setFill()
-        NSBezierPath(ovalIn: NSRect(x: last.x - 2.2, y: last.y - 2.2, width: 4.4, height: 4.4)).fill()
+        // 末端圆点已删：标题行右侧就写着当前值，圆点只是在小图上重复它
     }
 
     /// 12 个核的逐核占用率
@@ -397,7 +391,7 @@ final class PanelView: NSView {
         let bw = (rect.width - CGFloat(n - 1) * gap) / CGFloat(n)
         for i in 0..<n {
             let x = rect.minX + CGFloat(i) * (bw + gap)
-            NSColor.labelColor.withAlphaComponent(0.12).setFill()
+            NSColor.labelColor.withAlphaComponent(0.08).setFill()
             NSBezierPath(roundedRect: NSRect(x: x, y: rect.minY, width: bw, height: rect.height),
                          xRadius: 1.5, yRadius: 1.5).fill()
             let v = min(max(cores[i], 0), 1)
@@ -441,10 +435,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private static let fixedPanelWidth: CGFloat = 300
 
-    private var macmonPath: String { ("~/.local/bin/macmon" as NSString).expandingTildeInPath }
+    /// 按 用户本地目录 → Homebrew(Apple Silicon) → Homebrew(Intel) 的顺序找 macmon。
+    /// 只认 ~/.local/bin 会让 `brew install macmon` 的用户永远搜不到（brew 装到 /opt/homebrew/bin），
+    /// 结果是 GPU / 内存 / 温度 三项全显示 "—"。nil 表示没装。
+    private var macmonPath: String? {
+        let fm = FileManager.default
+        let candidates = [
+            ("~/.local/bin/macmon" as NSString).expandingTildeInPath,
+            "/opt/homebrew/bin/macmon",
+            "/usr/local/bin/macmon"
+        ]
+        return candidates.first { fm.isExecutableFile(atPath: $0) }
+    }
 
     func applicationDidFinishLaunching(_: Notification) {
-        macmonAvailable = FileManager.default.isExecutableFile(atPath: macmonPath)
+        macmonAvailable = macmonPath != nil
         meter.macmonAvailable = macmonAvailable
         panel.macmonAvailable = macmonAvailable
 
@@ -484,7 +489,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(NSMenuItem.separator())
         }
 
-        let coreItem = NSMenuItem(title: Loc.t("显示每个核心（12 核）", "Show every core (12 cores)"), action: #selector(toggleCores(_:)), keyEquivalent: "")
+        // 核数从内核读，不写死——写死会在 M4 之类的机器上给出错误数字
+        let n = ProcessInfo.processInfo.activeProcessorCount
+        let coreItem = NSMenuItem(title: Loc.t("显示每个核心（\(n) 核）", "Show every core (\(n) cores)"), action: #selector(toggleCores(_:)), keyEquivalent: "")
         coreItem.target = self
         coreItem.state = .on                 // 默认打开
         menu.addItem(coreItem)
@@ -579,7 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fallbackTimer = nil
         buf.removeAll(keepingCapacity: true)
 
-        macmonAvailable = FileManager.default.isExecutableFile(atPath: macmonPath)
+        macmonAvailable = macmonPath != nil
         meter.macmonAvailable = macmonAvailable
         panel.macmonAvailable = macmonAvailable
 
@@ -592,8 +599,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
+        guard let bin = macmonPath else { return }
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: macmonPath)
+        p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["pipe", "-i", String(intervalMs)]
         p.standardError = FileHandle.nullDevice
 
@@ -604,11 +612,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if data.isEmpty { return }
             self?.enqueue(data)
         }
-        try? p.run()
         proc = p
+
+        // macmon 在但拉不起来（权限 / Gatekeeper / 架构不匹配）时不能整栏停摆：
+        // 退回 CPU 自采样，保证菜单栏至少还是活的。
+        do {
+            try p.run()
+        } catch {
+            scheduleCPUTick()
+        }
     }
 
-    /// macmon 缺失时的兜底心跳
+    /// macmon 缺失或启动失败时的兜底心跳
     private func scheduleCPUTick() {
         fallbackTimer?.invalidate()
         let t = Timer(timeInterval: Double(intervalMs) / 1000.0, repeats: true) { [weak self] _ in
@@ -618,13 +633,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fallbackTimer = t
     }
 
-    private func tickCPU() {
+    /// 唯一的 CPU 采样入口：菜单栏、面板、历史曲线都从这里取值。
+    private func sampleCPU() {
         let s = cpuSampler.sample()
         if let load = s.overall { cpuLoad = load }
         if !s.perCore.isEmpty { panel.cores = s.perCore }
+        append(&panel.cpuHist, cpuLoad)
+    }
+
+    private func tickCPU() {
+        sampleCPU()
         meter.cpu = cpuLoad
         panel.cpu = cpuLoad
-        append(&panel.cpuHist, cpuLoad)
         meter.needsDisplay = true
     }
 
@@ -662,9 +682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func apply(_ d: [String: Any]) {
-        let s = cpuSampler.sample()
-        if let load = s.overall { cpuLoad = load }
-        if !s.perCore.isEmpty { panel.cores = s.perCore }
+        sampleCPU()
 
         let gpu = num(d["gpu_scaled_ratio"])
         let temp = (d["temp"] as? [String: Any]).map { num($0["cpu_temp_avg"]) } ?? 0
@@ -704,9 +722,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func num(_ v: Any?) -> Double {
-        if let n = v as? NSNumber { return n.doubleValue }
-        if let n = v as? Double { return n }
-        return 0
+        return (v as? NSNumber)?.doubleValue ?? 0   // JSONSerialization 只会给 NSNumber
     }
 }
 

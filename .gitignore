@@ -1,5 +1,6 @@
 # 构建产物
 MacMonBar.app/
+MacMonBar-*.app.zip
 *.o
 *.dSYM/
 *.dylib

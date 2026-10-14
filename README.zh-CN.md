@@ -1,79 +1,62 @@
 # MacMonBar
 
-一个原生的 macOS 菜单栏前端，为 [macmon](https://github.com/vladkens/macmon) 而做——CPU、GPU、内存、温度一眼可见，并且**每一个核**的占用率都单独统计。
+**把 CPU、GPU、内存、温度放进 macOS 菜单栏——一个状态项、四张趋势图、芯片上每一个核心。**
 
-一个状态栏图标、四张趋势图、一个 540 行的 Swift 文件，**零第三方依赖**。
+手写 733 行 Swift，零第三方依赖。占用 **18.5 MiB 内存、0.43% 单核**，而把 [macmon](https://github.com/vladkens/macmon) 挂在终端窗口里要花 **≈75 MiB**。
 
-[English →](./README.md)
+[English →](./README.md) · [完整功能](docs/features.md) · [更新记录](CHANGELOG.md)
 
-![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![License](https://img.shields.io/badge/license-MIT-green)
+
+![MacMonBar 展开面板](docs/zh/panel-light.png)
+
+![MacMonBar 状态栏](docs/zh/statusbar-light.png)
 
 ---
 
-## 为什么做这个
+## 性能一览
 
-`macmon` 是一个很好的、不需要 sudo 的 Apple Silicon 监控工具，但它住在终端里。在 Terminal.app 里跑它，等于同时养着一个窗口、一个标签页、一个登录 shell 和一份回滚缓冲区——内存上这是监控本身的四倍；CPU 上两者倒还打平（都不到 1% 个核）。
+| | 终端路线 | MacMonBar | 差距 |
+|---|---|---|---|
+| 内存（footprint） | ≈ 75 MiB | **18.5 MiB** | **−75%** |
+| CPU（2 秒刷新） | ≈ 0.62% 单核 | **0.43%** 单核 | −31% |
+| 增量功耗 | — | **≈ 3.8 mW** | 每天约 0.1% 一格电 |
+| GPU | — | **0.000%** | 纯 AppKit 2D，CPU 上光栅化 |
 
-| 方案 | 物理内存占用 | 说明 |
-|---|---|---|
-| 在 Terminal.app 里跑 `macmon` | **约 75 MiB** | Terminal.app 72.2 MiB + `macmon` TUI 2.7 MiB |
-| MacMonBar，菜单关闭 | **约 18.5 MiB** | App 12.9 MiB + `macmon pipe` 子进程 5.6 MiB |
-| MacMonBar，菜单展开 | **约 24 MiB** | App 约 18 MiB（首次展开 +5）+ 子进程 5.6 MiB |
+全部实测，不是估算——内存走 `libproc` 的 `ri_phys_footprint`，CPU 时间为多轮 8 秒以上窗口的统计。完整方法、开销分解、刷新间隔表与功耗标定见 **[docs/performance.md](docs/performance.md)**。
 
-菜单栏也是三种"挂件"形态里唯一能做到 1 Hz 刷新的。桌面挂件和右侧通知中心挂件用的是**同一套** WidgetKit 技术：时间线驱动、被节流到分钟级、无法自己采样，还必须配一个宿主 App + App Group——最后往往比它包起来的东西还重。
+## 为什么选它
 
-## 截图
+- **CPU 数字是诚实的。** CPU 与逐核占用率由 App 自己用 Mach `host_processor_info` 采样，因此所有核心都在，核数也来自内核。macmon 自己的 `cpu_usage_pct` 是频率加权驻留度：12 线程全核加载时它报 **59.0%**，而真实利用率是 **99.3%**。**[原理 →](docs/how-it-works.md)**
+- **没装 macmon 也能用。** 采样器跑在自己的定时器上，所以缺 macmon 只损失 GPU / 内存 / 温度三项，CPU 照常；那三项显示 `—`，而不是误导性的 `0%`。
+- **没有 Dock 图标、没有窗口、没有可切换的界面。** `LSUIElement`，它只活在菜单栏里。
+- **零依赖，单文件。** 只用 AppKit + Foundation + Mach。没有 SwiftPM、没有 Carthage、没有 vendor 代码——也没有 macmon 的代码：运行时通过调用 `macmon` 二进制拿 GPU / 内存 / 温度。**[为什么保留这个依赖 →](docs/macmon.md)**
+- **不是小组件。** 菜单栏是唯一能 2Hz 采样又不必养着终端会话的形态，不需要宿主 App、不需要 App Group——WidgetKit 由时间线驱动并被节流到分钟级，所以小组件比它包裹的东西更重。
+- **两套互不重叠的色系。** 图表用身份色（蓝 CPU / 玫红 GPU / 青内存 / 紫温度）；数字用数值色（按各自阈值绿 / 琥珀 / 红）。图表永远不会和一个穿同色的数字撞上。**[设计说明 →](docs/design.md)**
 
-状态栏（默认状态：百分比按占用率着色、三个指标间有细竖线分隔、无进度条、不显示温度）：
+## 安装
 
-![状态栏，浅色](docs/statusbar-light.png)
+需要 macOS 13+ 与 Apple Silicon。
 
-打开进度条后的状态栏（百分比颜色区分默认已开启）：
+### 第一步——先装 macmon
 
-![状态栏含进度条，浅色](docs/statusbar-bars-light.png)
+MacMonBar 需要 `macmon` 二进制来提供 GPU、内存与温度：
 
-打开温度显示后的状态栏：
+```bash
+brew install macmon
+```
 
-![状态栏含温度，浅色](docs/statusbar-temp-light.png)
+没有 Homebrew？把 [macmon 的 release](https://github.com/vladkens/macmon/releases) 里预编译的 arm64 二进制丢进 `~/.local/bin` 即可。MacMonBar 会按 `~/.local/bin` → `/opt/homebrew/bin` → `/usr/local/bin` 的顺序查找。
 
-展开后的面板——四张趋势图（2 行 × 2 列）+ 逐核柱状图：
+### 第二步——装 MacMonBar
 
-![面板，浅色](docs/panel-light.png)
+**直接下载**最新版本：
 
-同一面板的深色模式：
+**[→ 下载 MacMonBar（macOS / Apple Silicon）](https://github.com/HairuoLiu/MacMonBar/releases/latest)**
 
-![面板，深色](docs/panel-dark.png)
+解压，把 `MacMonBar.app` 拖进 `/Applications`，打开。没有 Dock 图标——去看菜单栏。
 
-以及没装 `macmon` 时的样子——CPU 和逐核照常工作，其余优雅降级成"—"而不是误导性的 0%：
-
-![未装 macmon 的状态栏](docs/statusbar-no-macmon-light.png)
-
-![未装 macmon 的面板](docs/panel-no-macmon-light.png)
-
-> 这些图不是屏幕截图，而是用 App 自己的 `draw(_:)` 代码对真实采样数据离线渲染出来的——见[复现截图](#复现截图)。
-
-## 功能
-
-- **状态栏**——CPU / GPU / RAM 三个百分比分成三组，之间用细竖线分隔。标签用 **13pt semibold**（与系统菜单栏同字号，比数值略重），在自己的预留位内居中；数值**左对齐、紧贴标签**，所以组内没有多余空白，留白全部让给组间的分组间隔。温度可选，默认关闭。
-- **百分比按占用率着色。** 每个百分比按自身负载着色——低于 50% 绿、50% 起琥珀、80% 起红——扫一眼就知道谁在忙，不用去读数字。默认开启，菜单里可以关回纯文本。
-- **进度条是可选项。** 那几条小进度条是独立的菜单开关，默认关闭。纯百分比是常驻屏幕角落最不打扰的形态；进度条留给你想一眼看出水位、而不是读具体数字的时候。
-- **点击展开**——四张整格宽度面积图排成 2 行 × 2 列（CPU、GPU、内存、温度），当前值直接标在标题行；下方是逐核柱状图。
-- **每一个核都统计到。** CPU 占用率由 App 自己通过 Mach `host_processor_info` 采样，所以所有核都会出现——M6 级别芯片上是 12 个。核数从内核读取，不写死。
-- **没有 macmon 也能看 CPU。** 采样器跑在自己的 Timer 上，所以缺 macmon 只损失 GPU / 内存 / 温度三项，其余不受影响。这三项会显示"—"而不是 0%，菜单里也会多出一条直达安装说明的链接。
-- **状态栏不显示瓦数。** 状态栏只放占用率；功耗对"写代码时该关注什么"这个决策没有帮助，所以刻意去掉了。
-- **刷新间隔**——1 秒 / 2 秒 / 5 秒，菜单里直接切；默认 2 秒。
-- **自动适配浅色 / 深色**，数值颜色阈值语义化（百分比 < 50% 绿 / ≥ 50% 琥珀 / ≥ 80% 红；温度 < 60°C 绿 / ≥ 60°C 琥珀 / ≥ 80°C 红）。图表线条与标签用另一套身份色（CPU 蓝 / GPU 玫红 / 内存青 / 温度紫），两套色永不重叠。
-- **中英双语。** 菜单与展开面板跟随系统语言：`zh-*` 系统显示中文，其余显示英文，启动时解析一次。状态栏的 CPU / GPU / RAM 标签则刻意固定英文、不随系统语言变，这样任何机器上状态栏读数都一致。改系统语言后需重启 App 生效。
-- `LSUIElement`——没有 Dock 图标、没有窗口、不用切换。
-- **无依赖。** 只用 AppKit + Foundation + Mach。没有 SwiftPM、没有 Carthage、没有任何第三方包。
-
-## 环境要求
-
-- macOS 13.0 及以上，Apple Silicon（不支持 Intel——在 Intel 上做一个菜单栏功耗监控没有意义）。
-- Xcode Command Line Tools（需要 `swiftc`）。
-- [macmon](https://github.com/vladkens/macmon) 装在 `~/.local/bin/macmon`——**GPU、内存、温度必需；CPU 可选。** MacMonBar 不含 macmon 的任何一行代码（用 Swift 重新实现），但运行时确实要调 `macmon` 这个二进制来拿这三项。CPU 占用率和逐核数据来自 App 自己的 Mach 采样器，有没有 macmon 都能用。
-
-## 构建与运行
+**或者从源码构建**（需要 Xcode Command Line Tools）：
 
 ```bash
 git clone https://github.com/HairuoLiu/MacMonBar.git
@@ -82,241 +65,124 @@ cd MacMonBar
 open MacMonBar.app
 ```
 
-开机自启：**系统设置 → 通用 → 登录项与扩展 → 打开时登录 → +**，选 `MacMonBar.app`。（它是 `LSUIElement`，不会出现在 Dock 和切换器里。）
+### 开机自启
 
-### 安装 macmon
+**系统设置 → 通用 → 登录项与扩展 → 登录时打开 → +**，选中 `MacMonBar.app`。
+
+### 配置
+
+点菜单栏图标即可：百分比着色（**开**）、进度条（关）、温度（关）、逐核柱（**开**）、刷新间隔（默认 **2 秒**，可选 1 / 2 / 5 秒）。完整菜单说明见 **[docs/features.md](docs/features.md)**。
+
+<details>
+<summary><b>给 AI Agent——无人值守安装</b></summary>
+
+先确认环境：Apple Silicon（`uname -m` = `arm64`）与 macOS 13+（`sw_vers -productVersion`）。任一不满足就明确报错退出——本 App 只有 arm64 版本，在 Intel 上跑不起来。
 
 ```bash
-brew install macmon
+#!/usr/bin/env bash
+# MacMonBar 无人值守安装，可重复执行。
+set -euo pipefail
+
+# 1. macmon —— 提供 GPU / 内存 / 温度；就算没有它，CPU 也照常工作
+if ! command -v macmon >/dev/null 2>&1 \
+   && [ ! -x "$HOME/.local/bin/macmon" ] \
+   && [ ! -x /opt/homebrew/bin/macmon ]; then
+  if command -v brew >/dev/null 2>&1; then
+    brew install macmon
+  else
+    mkdir -p "$HOME/.local/bin"
+    curl -fsSL https://github.com/vladkens/macmon/releases/latest/download/macmon-macos-arm64.tar.gz \
+      | tar -xz -C "$HOME/.local/bin" macmon
+    chmod +x "$HOME/.local/bin/macmon"
+  fi
+fi
+
+# 2. 验证 macmon 真的能吐出一行可解析的 JSON
+MACMON_BIN="$HOME/.local/bin/macmon"
+[ -x "$MACMON_BIN" ] || MACMON_BIN="$(command -v macmon)"
+"$MACMON_BIN" pipe -i 500 2>/dev/null | head -n 1 \
+  | python3 -c 'import json,sys; json.loads(sys.stdin.read())' \
+  || { echo "macmon 没有输出可解析的 JSON，请检查权限/Gatekeeper" >&2; exit 1; }
+# 应包含字段：gpu_scaled_ratio、memory.ram_usage / ram_total、temp.cpu_temp_avg
+
+# 3. MacMonBar —— 从 API 解析最新资产，不要写死版本号
+URL=$(curl -fsSL https://api.github.com/repos/HairuoLiu/MacMonBar/releases/latest \
+      | python3 -c 'import json,sys; print([a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"].endswith(".zip")][0])')
+curl -fsSL "$URL" -o /tmp/MacMonBar.zip
+rm -rf /tmp/MacMonBar-app && mkdir -p /tmp/MacMonBar-app
+unzip -oq /tmp/MacMonBar.zip -d /tmp/MacMonBar-app
+
+# 4. 安装，并清掉 quarantine 位，避免 Gatekeeper 弹窗
+rm -rf /Applications/MacMonBar.app
+mv /tmp/MacMonBar-app/MacMonBar.app /Applications/
+xattr -dr com.apple.quarantine /Applications/MacMonBar.app 2>/dev/null || true
+
+# 5. 启动并确认进程存活——它是 LSUIElement，没有窗口可看
+open /Applications/MacMonBar.app
+sleep 2
+pgrep -x MacMonBar >/dev/null && echo "OK: MacMonBar running" || { echo "启动失败" >&2; exit 1; }
 ```
 
-不想用包管理器的话，也可以从 [releases](https://github.com/vladkens/macmon/releases) 下载预编译的 arm64 二进制放进 `~/.local/bin`，并确认该目录在 `PATH` 里。MacMonBar 会把 `macmon pipe -i <interval>` 作为子进程拉起来，逐行读它的 JSON，不经过终端。
+给 Agent 的几条提醒：
 
-## 工作原理
+- App 在启动时**以及**每次切换刷新间隔时读 `macmon`。如果你在 MacMonBar 已经运行时才装上 macmon，请从菜单里 **退出 MacMonBar** 再重新打开——菜单里没有"重新加载"这一项。
+- 成功的标志是：有个叫 `MacMonBar` 的进程，外加一个跑着 `pipe -i 2000` 的 `macmon` 子进程。
+- **不要**试图截图验证——它没有窗口。用 `pgrep` 和菜单栏上那一项是否存在来判断。
+- 卸载：从菜单退出，删掉 `/Applications/MacMonBar.app`。除此之外它不在 bundle 外写任何东西。
 
-```
-  [装了 macmon]        macmon pipe -i 1000（子进程）
-                       stdout JSON  ->  gpu_scaled_ratio
-                                       ->  memory.ram_usage / ram_total
-                                       ->  temp.cpu_temp_avg
-                                           |
-                                           +--> GPU / 内存 / 温度
-                                           |    （没装 macmon 时这三项显示"—"）
+</details>
 
-  [任何时候]            Timer @ intervalMs          Mach host_processor_info
-                       独立心跳，不等 macmon   -->  (PROCESSOR_CPU_LOAD_INFO)
-                                                        |
-                                                        v
-                                          每核 user/system/nice/idle tick
-                                                        |
-                                                        v
-                                          基于差值的占用率
-                                          覆盖全部 N 个核 ──▶ MeterView（状态栏）
-                                                            └▶ PanelView（展开面板）
-```
+## 故障排查
 
-**CPU 占用率是自己算的，不取 macmon 的值。** macmon 的 `cpu_usage_pct` 是一个*频率加权驻留*指标——核在各个 DVFS 档位上花了多少时间——而不是"这个核忙不忙"。12 线程全核压载时，两者能差出 1.7 倍：
+<details>
+<summary><b>出问题了——点开这里</b></summary>
 
-| 负载 | Mach `host_processor_info` | macmon `cpu_usage_pct` |
+| 现象 | 原因 | 解决 |
 |---|---|---|
-| 空闲 | 21.4 % | — |
-| 4 个忙线程 | 44.6 % | — |
-| 6 个忙线程 | 59.9 % | — |
-| **12 个忙线程（全核）** | **99.3 %** | **59.0 %** |
+| GPU / 内存 / 温度显示 `—` | 找不到 macmon，或找到了但启动失败 | 先装它（第一步），然后**退出并重开 MacMonBar**。查找顺序：`~/.local/bin` → `/opt/homebrew/bin` → `/usr/local/bin` |
+| 全部指标都是 `—`，连 CPU 也是 | 理论上不该发生——CPU 有自己的定时器。请反馈 | — |
+| 一直卡在 `0%` 不动 | 旧版本（≤ 0.1.x）所有指标都依赖 macmon | 升级到 0.2.0 或更高 |
+| 重启后菜单栏那一项不见了 | 没有设置成登录项 | **系统设置 → 通用 → 登录项与扩展 → 登录时打开 → +** |
+| 菜单栏那一项被藏进刘海底下 | 菜单栏排满时 macOS 会把右边的项挤掉 | 按住 `⌘` 拖动调整顺序，或退出其他菜单栏 App |
+| 提示"MacMonBar 已损坏／无法打开" | 下载的未签名构建带 Gatekeeper quarantine | `xattr -dr com.apple.quarantine /Applications/MacMonBar.app` |
+| 构建时报 `xcrun: error: invalid active developer path` | 没装 Command Line Tools | `xcode-select --install` |
+| 构建时报 `swiftc: error: unable to find utility` | 同上 | 同上 |
+| `open MacMonBar.app` 之后什么都没发生 | 它是 `LSUIElement`，设计上就没有窗口和 Dock 图标 | 看菜单栏 |
+| 菜单展开时面板冻住 | 0.2.0 已修（`DispatchQueue.main.async` 的重绘在 `NSEventTrackingRunLoopMode` 里不会执行） | 升级，[细节](docs/how-it-works.md) |
+| Intel 机器上构建失败 | 编译目标是 `arm64-apple-macosx13.0` | 不支持；Intel 上做菜单栏监视器没有意义 |
+| CPU 数值和活动监视器不一致 | 预期之内。活动监视器显示的是频率加权驻留度，和 macmon 同一口径 | [细节](docs/how-it-works.md) |
 
-对于一个占用率仪表，你要的是第二列。`tools/cputest.swift` 可以复现这张表；`tools/coretest.swift` 打印逐核数值，并与 `mactop` 的 `core_usages` 交叉验证过（偏差 1 – 3 个百分点）。
+</details>
 
-### 一个不太容易发现的坑
+## 截图
 
-`NSMenu` 展开时会在 `NSEventTrackingRunLoopMode` 里跑一个嵌套事件循环。用 `DispatchQueue.main.async` 投递的 block 在这个模式下**不会**被派发，所以最直觉的写法——管道回调 → `DispatchQueue.main.async` → 重绘——会让面板在你点下图标的那一刻就冻住。
+开启进度条——可选的水平刻度条：
 
-直接测出来的结果：菜单展开的 25 秒里，后台队列收到 24 个采样，但只跑了 3 次 `ingest`、1 次重绘。
+![状态栏·进度条](docs/zh/statusbar-bars-light.png)
 
-解决办法是把原始字节交给一个挂在 `RunLoop.main` 的 `.common` 模式上的 `Timer`，这个模式在事件跟踪期间照样会被驱动：
+没有 macmon——CPU 与逐核照常工作，其余三项显示 `—` 而不是 `0%`：
 
-```swift
-RunLoop.main.add(t, forMode: .common)
-```
+![无 macmon](docs/zh/statusbar-no-macmon-light.png)
 
-改完之后同样的 25 秒窗口变成 `bg=24 main=24 panelDraw=23`——面板在菜单展开期间是实打实每秒光栅化一次的。这也是下面功耗数字可信的原因：绘制的活是真的干了，没有被跳过。
+深色模式、开启温度，以及降级状态下的面板：**[docs/screenshots.md](docs/screenshots.md)**。
 
-## 和 macmon 到底是什么关系
+## 深入了解
 
-这个问题人人都会问，所以单开一节：**没有使用 macmon 的任何代码。** 不是 fork、不是内嵌库、不是链接依赖。MacMonBar 是 543 行从零写的 Swift；macmon 是 Rust 写的。这个仓库里没有 Rust，也没有任何地方调用它的代码。
-
-全部关系就是：MacMonBar 把 `macmon pipe -i <interval>` 拉成子进程，读它的 JSON。
-
-| 指标 | 数字来自哪里 | 用了 macmon 的代码？ |
-|---|---|---|
-| CPU 占用率 | `CPUCoreSampler` → Mach `host_processor_info`（Apple API） | 否 |
-| 逐核占用率 | 同一个采样器 | 否 |
-| GPU 占用率 | macmon JSON 里的 `gpu_scaled_ratio` | 否——但是由 macmon 这个二进制算出来的 |
-| 内存 % | macmon JSON 里的 `ram_usage` / `ram_total` | 否 |
-| 温度 | macmon JSON 里的 `cpu_temp_avg` | 否 |
-
-### 为什么保留这个依赖
-
-四项指标里，两项换成原生很容易，两项很难。
-
-| 指标 | 原生替代方案 | 工作量 |
-|---|---|---|
-| CPU / 逐核 | 已经是原生——跑在自己的 Timer 上 | 已完成 |
-| 内存 | `host_statistics64` + `vm_statistics64` | 约 30 行，容易 |
-| GPU 占用率 | IOReport 私有框架 | 难，且每次系统升级都可能失效 |
-| 温度 | 没有公开 API——IOHID / SMC | 难，且每次系统升级都可能失效 |
-
-难的两项恰好就是 macmon 已经解决的部分，也恰好是每次 macOS 更新都会崩的部分。自己重新实现，等于用一个 9 MiB 的子进程换一份长期的维护负担——而且会让 App 变得更不可靠，不是更可靠。
-
-在 0.2.0 之前，这个耦合比看上去更紧：`cpuSampler.sample()` 只能从 `apply()` 到达，而 `apply()` 只在 macmon 管道送来完整 JSON 行时才跑。也就是说没装 macmon 时，不只是那三项，**连 CPU 都会一起停在 0%**。现在采样器有了自己的 `Timer`，依赖范围被诚实地限定在它真正提供的那三个指标上。
-
-名字保留也是同一个道理：`MacMonBar` 说清楚了自己是什么——macmon 的菜单栏。一边还在调 macmon 的二进制、一边把名字里的 macmon 拿掉，那是更不诚实，不是更干净。
-
-（许可证上没有义务：MIT 只要求在*软件副本*中保留声明，而这里一行都没带。但致谢照样给。）
-
-## 实测资源占用
-
-测试机：Apple M6，32 GB，macOS 13 时代 SDK。物理内存用 `libproc` 的 `proc_pid_rusage`（`ri_phys_footprint`）测，不用 RSS——footprint 才是 macOS 上跨进程比较内存的正确指标。
-
-> **2026-10-13 全量复测。** 复测同时抓出并修掉了测量工具的一个单位 bug：`ri_user_time` / `ri_system_time` 的单位是 Mach tick（Apple Silicon 上 1 tick = 41.6667 ns），不是纳秒；此前三个测量脚本都按纳秒除了 `1e9`，**CPU 时间被低估 41.67 倍**。修正用单线程空转对照验证（应读回 ≈100% 个核）。以下数字全部出自修正后的 `tools/measure.py` 等脚本。
-
-| | 终端方案 | MacMonBar，菜单关闭 | MacMonBar，菜单展开 |
-|---|---|---|---|
-| 常驻内存 | 约 75 MiB | 18.5 MiB | 约 24 MiB |
-| CPU 时间 | 约 0.62% 个核 | 约 0.43% 个核 | 约 0.54% 个核 |
-
-> MacMonBar 两列按新的 **2 秒**默认刷新计；1 秒时为 0.74% / 1.05%——见下方刷新间隔表。
-
-拆开看：终端方案 = Terminal.app（0.225% / 72.2 MiB）+ `macmon` TUI 模式（0.398% / 2.7 MiB）；关闭态 = App 本体（0.17% / 12.9 MiB）+ `macmon pipe` 子进程（0.26% / 5.6 MiB）；展开态 = 本体 0.29% + 子进程约 0.26%。
-
-首次点开菜单约 **+5 MiB**（裸二进制实测 8.5 → 13.3 MiB）：菜单窗口和面板的备份存储只有在你点下图标之后才存在；重复点开不再增长（连续 9 次展开实测持平）。长时间驻留有缓慢堆增长——运行 1.5 小时的实例为 21.0 MiB，疑似每 2 秒一次 JSON 解析留下的分配碎片。
-
-### 功耗
-
-整机功耗分辨不出这么小的一个应用。做了一次三方 A/B——什么都不跑 / 挂菜单栏 / 挂菜单栏再加一个终端窗口——三者分别测到 **10.41 W / 10.33 W / 10.38 W**，而单纯的重测噪声就有 **±0.71 W**。菜单栏的贡献在整机分辨率下根本区分不出来，所以下面这组数字改用实测 CPU 时间推算，标定系数来自同一台机器：
-
-- 空闲：**8.60 W**
-- 12 线程 100%：**19.13 W**
-- ⇒ **12 核整体每 100% 对应 10.53 W**（约每 1 个百分点 0.105 W，折合每核满跑约 0.88 W）
-
-每个状态实测 8 秒以上窗口、多轮复测（`tools/measure.py`）：
-
-| 状态 | CPU 时间 | 增量功耗 | 每分钟能量 |
-|---|---|---|---|
-| 菜单栏常驻，**不点开**（2 秒默认） | 0.26 core-s/分 | 约 3.8 mW | 约 0.23 J |
-| 菜单展开，4 张图 + 12 核条每 2 秒重绘 | 0.33 core-s/分 | 约 4.8 mW | 约 0.29 J |
-
-功耗按标定系数线性外推，是**上限**：0.43% 的占空比不会真把核心频率拉起来，实际增量比这个低。
-
-**有没有差距？相对意义上有，绝对意义上没有。** 展开菜单会多干约 **27%** 的活，折算下来约 1.0 mW、每分钟约 0.06 J——仍比整机测量的 ±0.71 W 噪声底低约 **700 倍**，约占整机空闲功耗的 **0.04%**。作为参照，正常浏览网页一分钟会把整机功耗推高几瓦（每分钟 100 – 200 J 量级）；这个 App 是 0.23 – 0.29 J。
-
-常驻一整年，两个状态分别约 **33 Wh** 和 **42 Wh**——在 80 Wh 电池上约等于 0.4 次和 0.5 次满电，折成每天 0.09 / 0.12 Wh，约 **0.1% / 0.15% 电量每天**。Mac mini 是台式机，这串数字的实际意义是电费：一年几分钱。
-
-App 自身的开销里，占大头的是它拉起来的 `macmon pipe` 子进程（0.262% = 0.16 core-s/分，占全家桶的 61%），其次是状态栏 `MeterView` 的每 2 秒重绘（此间隔下约 0.10%，1 秒基线为约 0.20%）——后者比四张趋势图加起来还贵。见下节。
-
-### 开销分解（2026-10-13，实测）
-
-把 App 拆成可拆除的积木逐块实测（菜单关闭、**1 秒**刷新基线上的增量——即*旧*默认值，不是新的 2 秒；改成 2 秒后每一行大约减半）：
-
-| 组件 | CPU | 说明 |
-|---|---|---|
-| `macmon pipe` 子进程 | 0.465% | 独立进程，提供 GPU / 内存 / 温度 |
-| 状态栏 `MeterView` 重绘 + 状态项合成 | 约 0.20% | **单项最贵**，比 4 张趋势图加起来还贵 |
-| JSON 摄入（管道 + 解析 + `apply` + 采样） | 约 0.04% | |
-| 定时器 + AppKit 地板 | 约 0.04% | 空白 AppKit 常驻应用本身只要 0.004% |
-
-刷新间隔（菜单里 1 / 2 / 5 秒三档，**默认 2 秒**；在当前代码上重新实测，每档两次 30 秒）：
-
-| 刷新间隔 | App | 子进程 | 合计 | 相对默认 |
-|---|---|---|---|---|
-| 1 秒 | 0.295% | 0.445% | 0.740% | +72% |
-| 2 秒（默认） | 0.168% | 0.262% | 0.429% | — |
-| 5 秒 | 0.098% | 0.110% | 0.207% | −52% |
-
-本版本把默认从 1 秒改成 2 秒——整个 App 从 0.740% 降到 0.429% 个核心，即 **−42%**。
-
-菜单展开态的增量（0.315%）再拆：趋势图数据路径 0.130%、逐核柱状图 0.022%、菜单事件跟踪与面板合成 0.163%。
-
-GPU 方面：MacMonBar 自身实测 **0.000%**——纯 AppKit 2D 应用，光栅化在 CPU 侧，面板合成记在 WindowServer 账上。"减少 GPU 占用"对这个 App 是不存在的命题。
-
-## 设计说明
-
-**为什么选菜单栏而不是挂件。** 按资源消耗和复杂度排序，菜单栏赢在内存（约为终端方案的四分之一，18.5 vs 75 MiB）和形态纯粹性上：它是唯一能以 1 Hz 采样而不养一整个终端会话的形态，不需要宿主 App、不需要 App Group、不需要时间管线。CPU 上两者其实打平——但终端方案的窗口合成还有一笔记在 WindowServer 账上的隐形开销，没算进进程表。桌面挂件和通知中心挂件本质是同一套 WidgetKit，只是多了一层仪式。
-
-**用图不用纯文字。** 光有百分比看不出趋势。四张 small multiples——一个指标一张、纵向排开——而不是两条叠在一起的 sparkline，因为折线交叉时叠线根本读不出来。每张图把当前值内嵌在标题行，配一条 50% 虚线参考线、18% 面积填充，以及最新采样点上的圆点。
-
-**两套互不重叠的色系。** 颜色分两层，绝不混用。**身份色**只归图表——CPU 蓝、GPU 玫红、内存青、温度紫，四种色相刻意避开绿、琥珀、红；**数值色**只归右侧的百分比与温度值——绿（正常）、琥珀（偏高）、红（告警），按各自阈值变化（百分比 <50% / ≥50% / ≥80%，温度 <60°C / ≥60°C / ≥80°C）。这样图表永远不会和穿同色的数值撞上：看一眼右边就知道谁在忙，看一眼线的颜色就知道是谁。深色模式下色相会提亮，以维持对比度。
-
-**固定宽度。** 面板固定 300 pt，左右各留 14 pt 内边距。宽度选择器被去掉了——一个监控工具应该有一个好用的默认值，而不是一个偏好设置面板。
-
-## 复现截图
-
-`docs/` 里的图不是屏幕截图，而是把真实采样数据喂给同一套 `PanelView` / `MeterView` 的 `draw(_:)`，再光栅化进 `NSBitmapImageRep`：
-
-```swift
-NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-view.frame = NSRect(x: 0, y: 0, width: w, height: h)
-view.draw(view.bounds)
-```
-
-这样不需要屏幕录制权限，也不可能和 App 真实渲染出来的样子走偏。要重新生成，拿 `src/main.swift`，把底部的 `NSApplication.shared` 启动段换成一个采集器（读 `macmon pipe -i 200` 约 26 秒），然后以 `scale: 2`（面板）和 `scale: 3`（状态栏）在 `.aqua` 和 `.darkAqua` 下分别渲染。
-
-两张 `-no-macmon-` 图走的是同一条管线，只是把 `macmonAvailable` 置为 `false` 并清空 GPU / 内存 / 温度的历史数组——那是真实的降级状态，不是手绘的示意图。
-
-## `tools/`
-
-几个小而专的脚本保留在这里，因为本 README 里每一个数字都出自其中之一。
-
-| 文件 | 用途 |
+| 页面 | 内容 |
 |---|---|
-| `cputest.swift` | 全核 CPU 精度测试：空闲 → 4 → 6 → 12 个忙线程 |
-| `coretest.swift` | 打印逐核占用率；与 `mactop` 交叉验证 |
-| `machsampler.swift` | 纯 Mach 采样器——零依赖基线 |
-| `measure.py` | 用 `libproc` 测单进程 CPU% / RSS / 物理内存 |
-| `measure_state.py` | 测某一状态在 N 秒内的 CPU 时间 |
-| `power_ab.py` | 上表所用的两状态功耗 A/B |
-
-任意一个都可以这样编译：`swiftc -O tools/<name>.swift -o /tmp/<name>`。
+| [docs/performance.md](docs/performance.md) | 内存 / CPU / 功耗实测、开销分解、刷新间隔表 |
+| [docs/how-it-works.md](docs/how-it-works.md) | 数据流、Mach 采样器、为何与 macmon 的 CPU 数值不同、`NSMenu` 事件循环坑 |
+| [docs/macmon.md](docs/macmon.md) | 与 macmon 的关系，以及为什么保留这个依赖 |
+| [docs/features.md](docs/features.md) | 每个功能、每个菜单项、每个默认值 |
+| [docs/design.md](docs/design.md) | 为什么是菜单栏、为什么用图、两套色系、宽度是量出来的 |
+| [docs/tools.md](docs/tools.md) | 测量脚本，以及截图是怎么生成的 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
 
 ## 致谢
 
-- [macmon](https://github.com/vladkens/macmon)（vladkens）——本项目前端所对接的无 sudo Apple Silicon 监控工具。MIT。
-- 逐核精度与 [mactop](https://github.com/context-labs/mactop) 交叉验证。
+- [macmon](https://github.com/vladkens/macmon)（作者 vladkens）——本 App 所包装的无 sudo Apple Silicon 监视器，MIT。
+- 逐核准确度与 [mactop](https://github.com/context-labs/mactop) 交叉验证。
 
-## 更新记录
-
-### 0.2.8 — 2026-10-14
-
-- **刷新间隔默认改为 2 秒**（菜单仍有 1 / 2 / 5 秒三档）。在当前代码上重测（每档两次 30 秒）：整个 App 从 0.740% 降到 0.429% 个核心，**−42%**。趋势图历史窗口随之变成 4 分钟。
-- **中英双语。** 菜单与展开面板跟随系统语言（`zh-*` 显示中文，其余显示英文），启动时解析一次；所有面向用户的字符串统一收到 `Loc.t(zh, en)` 这个 helper 后面。状态栏标签则刻意固定英文——CPU / GPU / RAM——不随系统语言变，这样任何机器上状态栏读数都一致。
-- **配色拆成两套互不重叠的色系。** 身份色只归图表（趋势线、左上角标签、状态栏进度条）：CPU 蓝 / GPU 玫红 / 内存青 / 温度紫，四种色相刻意避开绿、琥珀、红；数值色只归右侧数字：绿（正常）/ 琥珀（偏高）/ 红（告警），百分比按 <50% / ≥50% / ≥80%，温度按 <60°C / ≥60°C / ≥80°C。图表永远不会和穿同色的数值撞上。逐核柱状图统一用 CPU 蓝，不再对高占用核染红。
-- **状态栏标签 13pt semibold + 居中。** 13pt 正是系统菜单栏字号（`NSFont.menuFont` 实测 13.0，状态栏按钮默认字体同为 13pt）。标签在自己的预留位内居中，两侧留白均衡；数值改为左对齐、紧贴标签，消除了原先右对齐时短值（"5%"）左侧空出的 17pt 死空白。面板图表标题继续用 11pt medium，两者不再共用同一常量。
-- **状态栏净宽反而更短。** 标签从 11pt 加到 13pt 后一度涨到 261pt，本版按实测重新定尺——数值槽按"常用最大值"（"99%" = 29.1pt）而非理论最大值（"100%" = 37.4pt）——压回 **230pt**，比换字号前的 237pt 还短 7pt。
-- **修复 `drawText` 的溢出裁字。** 绘制矩形此前严格等于槽宽，当文本比槽宽时 `NSString.draw` 会把最后一个字符折到第二行、再被单行高度裁掉——满值渲染显示成 "100" 而不是 "100%"。现在绘制矩形按文本实际宽度放开，并按对齐方式重新锚定。
-- **文档**：全部截图按真实采样数据重渲染；离屏渲染管线修复了深色模式下动态色（`labelColor` / `secondaryLabelColor`）不跟随视图外观解析的问题。
-
-### 0.2.2 — 2026-10-13
-
-- **状态栏重做。** 字号放大——标签 10 → 11 pt，数值 11 → 13 pt——并相应加宽标签与数值的预留宽度（这两个字体同时决定展开面板图表标题的字号，面板已重渲染确认无裁切）。那几条小进度条与百分比按占用率着色，现在是两个互相独立的菜单开关：进度条默认关闭；百分比着色**默认开启**——低于 50% 绿、50% 起琥珀、80% 起红。
-- **指标间加分隔线。** 三个指标之间加了细竖线分隔，且每个标签右对齐、紧贴自己的百分比，解决了"哪个数属于哪个指标"的问题——此前数值离自己的标签很远，却离下一个指标的标签只有 6pt。
-- **开销不变**：新默认不画进度条，每秒重绘本应略省，但放大的文字把省下的吃回去了。实测主进程 CPU 仍是约 0.26%（"开销分解"里约 0.20% 的状态栏重绘数字依然成立）。
-- **文档**：按新默认重新生成截图，并新增 `statusbar-bars-light.png` 展示开启进度条（着色默认开）后的样子；面板因共用同一阈值函数也一并重渲染。
-
-### 0.2.1 — 2026-10-13
-
-- **修复（测量工具）**：`tools/` 下三个脚本把 `ri_user_time` / `ri_system_time` 当纳秒除了 `1e9`，实际单位是 Mach tick（41.6667 ns），CPU 时间被低估 41.67 倍。已按 `mach_timebase_info` 修正并用单线程空转对照验证。README 全部功耗 / CPU 数字随之重算。
-- **文档**：新增"开销分解"一节——按组件实测（macmon 子进程 0.465%、状态栏重绘 0.20%、JSON 摄入 0.04%、AppKit 地板 0.04%）与刷新间隔三档的对照。
-
-### 0.2.0 — 2026-10-13
-
-- **修复**：没装 `macmon` 时，不只是那三项，**连 CPU 都会一起停在 0%**——因为 `cpuSampler.sample()` 只能通过 macmon 的 JSON 到达。现在 CPU 和逐核跑在独立的 `Timer` 上。
-- **修复**：数据源缺失时，GPU / 内存 / 温度 显示"—"而不是误导性的 0%。
-- **新增**：菜单里多一条直达 macmon 安装说明的入口，仅在 macmon 缺失时出现。
-- **清理**：删除死代码——`kLabel`、`CPUCoreSampler.coreCount`、`AppDelegate.latest`（均为只写不用或完全未引用）。
-
-### 0.1.0 — 2026-10-13
-
-- 首个版本。
-
-## 许可证
+## 授权
 
 MIT——见 [LICENSE](./LICENSE)。

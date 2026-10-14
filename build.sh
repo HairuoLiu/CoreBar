@@ -15,10 +15,15 @@ if ! command -v swiftc >/dev/null 2>&1; then
   exit 1
 fi
 
-MACMON="$HOME/.local/bin/macmon"
-if [ ! -x "$MACMON" ]; then
-  echo "提示：未在 $MACMON 找到 macmon。MacMonBar 需要它提供 GPU / 内存 / 温度数据。" >&2
-  echo "  CPU 与逐核占用率不依赖它，但其他指标会显示为 0。" >&2
+# 与 App 内查找顺序一致：~/.local/bin → Homebrew(AS) → Homebrew(Intel)
+MACMON=""
+for c in "$HOME/.local/bin/macmon" /opt/homebrew/bin/macmon /usr/local/bin/macmon; do
+  [ -x "$c" ] && MACMON="$c" && break
+done
+if [ -z "$MACMON" ]; then
+  echo "提示：未找到 macmon（已查找 ~/.local/bin、/opt/homebrew/bin、/usr/local/bin）。" >&2
+  echo "  安装：brew install macmon" >&2
+  echo "  CPU 与逐核占用率不依赖它，其余指标会显示 —。" >&2
 fi
 
 rm -rf "$APP"
