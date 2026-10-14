@@ -40,6 +40,12 @@
 
 ![面板，深色](docs/panel-dark.png)
 
+以及没装 `macmon` 时的样子——CPU 和逐核照常工作，其余优雅降级成"—"而不是误导性的 0%：
+
+![未装 macmon 的状态栏](docs/statusbar-no-macmon-light.png)
+
+![未装 macmon 的面板](docs/panel-no-macmon-light.png)
+
 > 这些图不是屏幕截图，而是用 App 自己的 `draw(_:)` 代码对真实采样数据离线渲染出来的——见[复现截图](#复现截图)。
 
 ## 功能
@@ -47,6 +53,7 @@
 - **状态栏**——CPU / GPU / 内存三条紧凑进度条，带百分比。温度可选，默认关闭。
 - **点击展开**——四张整格宽度面积图排成 2 行 × 2 列（CPU、GPU、内存、温度），当前值直接标在标题行；下方是逐核柱状图。
 - **每一个核都统计到。** CPU 占用率由 App 自己通过 Mach `host_processor_info` 采样，所以所有核都会出现——M6 级别芯片上是 12 个。核数从内核读取，不写死。
+- **没有 macmon 也能看 CPU。** 采样器跑在自己的 Timer 上，所以缺 macmon 只损失 GPU / 内存 / 温度三项，其余不受影响。这三项会显示"—"而不是 0%，菜单里也会多出一条直达安装说明的链接。
 - **状态栏不显示瓦数。** 状态栏只放占用率；功耗对"写代码时该关注什么"这个决策没有帮助，所以刻意去掉了。
 - **刷新间隔**——1 秒 / 2 秒 / 5 秒，菜单里直接切。
 - **自动适配浅色 / 深色**，颜色阈值语义化（≥ 75% 转红，≥ 40% 转琥珀色）。
@@ -57,7 +64,7 @@
 
 - macOS 13.0 及以上，Apple Silicon（不支持 Intel——在 Intel 上做一个菜单栏功耗监控没有意义）。
 - Xcode Command Line Tools（需要 `swiftc`）。
-- [macmon](https://github.com/vladkens/macmon) 装在 `~/.local/bin/macmon`。**这是硬性前置条件，不是可选组件。** MacMonBar 不含 macmon 的任何一行代码——它是用 Swift 重新实现的——但运行时确实要调 `macmon` 这个二进制来拿 GPU、内存和温度，而且这条 JSON 流同时是整个 App 的采样时钟。没有 macmon 就完全不会更新：状态栏会一直停在 0%。（实测：macmon 缺失时 `apply` 一次都不会被调用，状态栏只画 1 次。）
+- [macmon](https://github.com/vladkens/macmon) 装在 `~/.local/bin/macmon`——**GPU、内存、温度必需；CPU 可选。** MacMonBar 不含 macmon 的任何一行代码（用 Swift 重新实现），但运行时确实要调 `macmon` 这个二进制来拿这三项。CPU 占用率和逐核数据来自 App 自己的 Mach 采样器，有没有 macmon 都能用。
 
 ## 构建与运行
 
@@ -81,18 +88,24 @@ brew install macmon
 ## 工作原理
 
 ```
-                         ┌─────────────────────────────┐
-   macmon pipe -i 1000   │  stdout 上的 JSON 行         │
-   （子进程）───────────▶│  gpu_scaled_ratio            │────┐
-                         │  memory.ram_usage / ram_total│    │
-                         │  temp.cpu_temp_avg           │    │
-                         └─────────────────────────────┘    │
-                                                           ▼
-   Mach host_processor_info ──▶ 每核 user/system/nice/idle tick
-   (PROCESSOR_CPU_LOAD_INFO)      ▼
-                                基于差值的占用率
-                                覆盖全部 N 个核 ──▶ MeterView（状态栏）
-                                                  └▶ PanelView（展开面板）
+  [装了 macmon]        macmon pipe -i 1000（子进程）
+                       stdout JSON  ->  gpu_scaled_ratio
+                                       ->  memory.ram_usage / ram_total
+                                       ->  temp.cpu_temp_avg
+                                           |
+                                           +--> GPU / 内存 / 温度
+                                           |    （没装 macmon 时这三项显示"—"）
+
+  [任何时候]            Timer @ intervalMs          Mach host_processor_info
+                       独立心跳，不等 macmon   -->  (PROCESSOR_CPU_LOAD_INFO)
+                                                        |
+                                                        v
+                                          每核 user/system/nice/idle tick
+                                                        |
+                                                        v
+                                          基于差值的占用率
+                                          覆盖全部 N 个核 ──▶ MeterView（状态栏）
+                                                            └▶ PanelView（展开面板）
 ```
 
 **CPU 占用率是自己算的，不取 macmon 的值。** macmon 的 `cpu_usage_pct` 是一个*频率加权驻留*指标——核在各个 DVFS 档位上花了多少时间——而不是"这个核忙不忙"。12 线程全核压载时，两者能差出 1.7 倍：
@@ -140,12 +153,14 @@ RunLoop.main.add(t, forMode: .common)
 
 | 指标 | 原生替代方案 | 工作量 |
 |---|---|---|
-| CPU / 逐核 | 已经是原生 | 已完成 |
+| CPU / 逐核 | 已经是原生——跑在自己的 Timer 上 | 已完成 |
 | 内存 | `host_statistics64` + `vm_statistics64` | 约 30 行，容易 |
 | GPU 占用率 | IOReport 私有框架 | 难，且每次系统升级都可能失效 |
 | 温度 | 没有公开 API——IOHID / SMC | 难，且每次系统升级都可能失效 |
 
 难的两项恰好就是 macmon 已经解决的部分，也恰好是每次 macOS 更新都会崩的部分。自己重新实现，等于用一个 9 MiB 的子进程换一份长期的维护负担——而且会让 App 变得更不可靠，不是更可靠。
+
+在 0.2.0 之前，这个耦合比看上去更紧：`cpuSampler.sample()` 只能从 `apply()` 到达，而 `apply()` 只在 macmon 管道送来完整 JSON 行时才跑。也就是说没装 macmon 时，不只是那三项，**连 CPU 都会一起停在 0%**。现在采样器有了自己的 `Timer`，依赖范围被诚实地限定在它真正提供的那三个指标上。
 
 名字保留也是同一个道理：`MacMonBar` 说清楚了自己是什么——macmon 的菜单栏。一边还在调 macmon 的二进制、一边把名字里的 macmon 拿掉，那是更不诚实，不是更干净。
 
@@ -205,6 +220,8 @@ view.draw(view.bounds)
 
 这样不需要屏幕录制权限，也不可能和 App 真实渲染出来的样子走偏。要重新生成，拿 `src/main.swift`，把底部的 `NSApplication.shared` 启动段换成一个采集器（读 `macmon pipe -i 200` 约 26 秒），然后以 `scale: 2`（面板）和 `scale: 3`（状态栏）在 `.aqua` 和 `.darkAqua` 下分别渲染。
 
+两张 `-no-macmon-` 图走的是同一条管线，只是把 `macmonAvailable` 置为 `false` 并清空 GPU / 内存 / 温度的历史数组——那是真实的降级状态，不是手绘的示意图。
+
 ## `tools/`
 
 几个小而专的脚本保留在这里，因为本 README 里每一个数字都出自其中之一。
@@ -224,6 +241,19 @@ view.draw(view.bounds)
 
 - [macmon](https://github.com/vladkens/macmon)（vladkens）——本项目前端所对接的无 sudo Apple Silicon 监控工具。MIT。
 - 逐核精度与 [mactop](https://github.com/context-labs/mactop) 交叉验证。
+
+## 更新记录
+
+### 0.2.0 — 2026-10-13
+
+- **修复**：没装 `macmon` 时，不只是那三项，**连 CPU 都会一起停在 0%**——因为 `cpuSampler.sample()` 只能通过 macmon 的 JSON 到达。现在 CPU 和逐核跑在独立的 `Timer` 上。
+- **修复**：数据源缺失时，GPU / 内存 / 温度 显示"—"而不是误导性的 0%。
+- **新增**：菜单里多一条直达 macmon 安装说明的入口，仅在 macmon 缺失时出现。
+- **清理**：删除死代码——`kLabel`、`CPUCoreSampler.coreCount`、`AppDelegate.latest`（均为只写不用或完全未引用）。
+
+### 0.1.0 — 2026-10-13
+
+- 首个版本。
 
 ## 许可证
 

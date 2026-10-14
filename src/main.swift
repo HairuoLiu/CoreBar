@@ -23,7 +23,6 @@ extension NSColor {
 }
 
 private let kPad: CGFloat = 14          // 面板左右内边距，避免顶到边框
-private let kLabel = NSFont.systemFont(ofSize: 11, weight: .medium)
 private let kLabelSmall = NSFont.systemFont(ofSize: 10, weight: .medium)
 private let kValue = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
 
@@ -63,7 +62,6 @@ struct CPUCoreSampler {
     private var prevUsed: UInt64 = 0
     private var prevTotal: UInt64 = 0
     private var prevCore: [[UInt64]] = []
-    var coreCount: Int = 0
     var hasBaseline = false
 
     private func readTicks() -> (used: UInt64, total: UInt64, cores: [[UInt64]])? {
@@ -96,7 +94,6 @@ struct CPUCoreSampler {
 
     mutating func sample() -> (overall: Double?, perCore: [Double]) {
         guard let t = readTicks() else { return (nil, []) }
-        coreCount = t.cores.count
         var perCore: [Double] = []
         if hasBaseline, prevCore.count == t.cores.count {
             perCore = zip(prevCore, t.cores).map { a, b in
@@ -138,6 +135,7 @@ final class MeterView: NSView {
     var mem: Double = 0
     var temp: Double = 0
     var showTemp = false                 // 默认关闭
+    var macmonAvailable = true           // false 时 GPU / 内存 / 温度显示"—"
 
     private enum L {
         static let label: CGFloat = 27    // 需容纳 10pt medium 的 "CPU"/"GPU"，20 会被裁成 "CP"
@@ -158,17 +156,21 @@ final class MeterView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         var x: CGFloat = 4
-        x = metric(name: "CPU", ratio: cpu, series: cpuColor(self), x: x)
-        x = metric(name: "GPU", ratio: gpu, series: gpuColor(self), x: x)
-        x = metric(name: "内存", ratio: mem, series: memColor(self), x: x)
+        x = metric(name: "CPU", ratio: cpu, available: true, series: cpuColor(self), x: x)
+        x = metric(name: "GPU", ratio: gpu, available: macmonAvailable, series: gpuColor(self), x: x)
+        x = metric(name: "内存", ratio: mem, available: macmonAvailable, series: memColor(self), x: x)
         if showTemp {
-            drawText(String(format: "%.0f°C", temp), in: NSRect(x: x, y: 0, width: L.temp, height: bounds.height),
-                     font: kValue, color: tempColor(self, temp), align: .right)
+            let r = NSRect(x: x, y: 0, width: L.temp, height: bounds.height)
+            if macmonAvailable {
+                drawText(String(format: "%.0f°C", temp), in: r, font: kValue, color: tempColor(self, temp), align: .right)
+            } else {
+                drawText("—", in: r, font: kValue, color: .tertiaryLabelColor, align: .right)
+            }
         }
     }
 
-    private func metric(name: String, ratio: Double, series: NSColor, x: CGFloat) -> CGFloat {
-        let pct = min(max(ratio, 0), 1)
+    /// available = false 表示数据源缺失，显示"—"而不是误导性的 0%
+    private func metric(name: String, ratio: Double, available: Bool, series: NSColor, x: CGFloat) -> CGFloat {
         drawText(name, in: NSRect(x: x, y: 0, width: L.label, height: bounds.height),
                  font: kLabelSmall, color: .secondaryLabelColor)
         var cx = x + L.label + 3
@@ -176,16 +178,22 @@ final class MeterView: NSView {
         let barRect = NSRect(x: cx, y: bounds.midY - 3.5, width: L.bar, height: 7)
         NSColor.labelColor.withAlphaComponent(0.15).setFill()
         NSBezierPath(roundedRect: barRect, xRadius: 3.5, yRadius: 3.5).fill()
-        if pct > 0.01 {
-            var f = barRect
-            f.size.width = max(4, L.bar * CGFloat(pct))
-            (pct >= 0.75 ? hotColor(self) : series).setFill()
-            NSBezierPath(roundedRect: f, xRadius: 3.5, yRadius: 3.5).fill()
-        }
         cx += L.bar + 4
 
-        drawText(String(format: "%.0f%%", pct * 100), in: NSRect(x: cx, y: 0, width: L.value, height: bounds.height),
-                 font: kValue, color: levelColor(self, pct), align: .right)
+        let valueRect = NSRect(x: cx, y: 0, width: L.value, height: bounds.height)
+        if available {
+            let pct = min(max(ratio, 0), 1)
+            if pct > 0.01 {
+                var f = barRect
+                f.size.width = max(4, L.bar * CGFloat(pct))
+                (pct >= 0.75 ? hotColor(self) : series).setFill()
+                NSBezierPath(roundedRect: f, xRadius: 3.5, yRadius: 3.5).fill()
+            }
+            drawText(String(format: "%.0f%%", pct * 100), in: valueRect,
+                     font: kValue, color: levelColor(self, pct), align: .right)
+        } else {
+            drawText("—", in: valueRect, font: kValue, color: .tertiaryLabelColor, align: .right)
+        }
         return cx + L.value + L.gap
     }
 
@@ -205,6 +213,7 @@ final class PanelView: NSView {
     var tempHist: [Double] = []
     var cores: [Double] = []
     var showCores = true                 // 默认打开
+    var macmonAvailable = true           // false 时 GPU / 内存 / 温度显示"—"
     let capacity = 120
 
     private enum L {
@@ -233,13 +242,16 @@ final class PanelView: NSView {
         let row0Y = coreBlock + L.cellH + L.rowGap
 
         trend(name: "CPU", data: cpuHist, series: cpuColor(self), current: cpu, unit: "%", ratio: cpu,
+              available: true,
               rect: NSRect(x: c.minX, y: row0Y, width: cellW, height: L.cellH))
         trend(name: "GPU", data: gpuHist, series: gpuColor(self), current: gpu, unit: "%", ratio: gpu,
+              available: macmonAvailable,
               rect: NSRect(x: c.minX + cellW + L.colGap, y: row0Y, width: cellW, height: L.cellH))
         trend(name: "内存", data: memHist, series: memColor(self), current: mem, unit: "%", ratio: mem,
+              available: macmonAvailable,
               rect: NSRect(x: c.minX, y: row1Y, width: cellW, height: L.cellH))
         trend(name: "温度", data: tempHist, series: tempColor(self, temp), current: temp, unit: "°C",
-              ratio: (temp - 30) / 70,
+              ratio: (temp - 30) / 70, available: macmonAvailable,
               rect: NSRect(x: c.minX + cellW + L.colGap, y: row1Y, width: cellW, height: L.cellH))
 
         if coreBlock > 0 {
@@ -248,11 +260,19 @@ final class PanelView: NSView {
     }
 
     /// 标题行（名称 + 当前值）+ 面积图。图按实际样本数铺满整格宽度
-    private func trend(name: String, data: [Double], series: NSColor, current: Double, unit: String, ratio: Double, rect: NSRect) {
+    private func trend(name: String, data: [Double], series: NSColor, current: Double,
+                       unit: String, ratio: Double, available: Bool, rect: NSRect) {
         let headRect = NSRect(x: rect.minX, y: rect.maxY - 15, width: rect.width, height: 15)
         drawText(name, in: headRect, font: kLabelSmall, color: series)
-        let valueText = unit == "%" ? String(format: "%.0f%%", current * 100) : String(format: "%.0f%@", current, unit)
-        let valueColor = unit == "%" ? levelColor(self, ratio) : tempColor(self, current)
+        let valueText: String
+        let valueColor: NSColor
+        if available {
+            valueText = unit == "%" ? String(format: "%.0f%%", current * 100) : String(format: "%.0f%@", current, unit)
+            valueColor = unit == "%" ? levelColor(self, ratio) : tempColor(self, current)
+        } else {
+            valueText = "—"                       // 数据源缺失，不显示会误导的 0
+            valueColor = .tertiaryLabelColor
+        }
         drawText(valueText, in: headRect, font: kValue, color: valueColor, align: .right)
 
         let chart = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - 16)
@@ -329,10 +349,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menu: NSMenu!
     private var panelItem: NSMenuItem!
     private var menuOpen = false
-    private var latest: [String: Any]?
     private var cpuSampler = CPUCoreSampler()
     private var cpuLoad: Double = 0
     private var lastSignature = ""
+
+    /// macmon 是否在位。它同时决定三件事：
+    /// GPU / 内存 / 温度 有无数据、菜单是否显示安装提示、CPU 由谁驱动心跳。
+    private var macmonAvailable = false
+    private var fallbackTimer: Timer?
 
     /// 后台线程收到的原始字节先入队，再由挂在 RunLoop .common 模式上的定时器取走。
     /// 原因：NSMenu 展开时会跑 NSEventTrackingRunLoopMode 的嵌套循环，
@@ -343,7 +367,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private static let fixedPanelWidth: CGFloat = 300
 
+    private var macmonPath: String { ("~/.local/bin/macmon" as NSString).expandingTildeInPath }
+
     func applicationDidFinishLaunching(_: Notification) {
+        macmonAvailable = FileManager.default.isExecutableFile(atPath: macmonPath)
+        meter.macmonAvailable = macmonAvailable
+        panel.macmonAvailable = macmonAvailable
+
         statusItem.button?.title = ""
         statusItem.button?.image = nil
         statusItem.button?.toolTip = "CPU / GPU / 内存 占用率 —— 点击展开趋势图"
@@ -369,6 +399,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panelItem.view = panel
         menu.addItem(panelItem)
         menu.addItem(NSMenuItem.separator())
+
+        if !macmonAvailable {
+            let hint = NSMenuItem(title: "未找到 macmon —— 点此查看安装说明",
+                                  action: #selector(openMacmonDocs), keyEquivalent: "")
+            hint.target = self
+            menu.addItem(hint)
+            menu.addItem(NSMenuItem.separator())
+        }
 
         let coreItem = NSMenuItem(title: "显示每个核心（12 核）", action: #selector(toggleCores(_:)), keyEquivalent: "")
         coreItem.target = self
@@ -426,19 +464,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
+    @objc private func openMacmonDocs() {
+        if let url = URL(string: "https://github.com/vladkens/macmon#-installation") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     func menuWillOpen(_: NSMenu) { menuOpen = true; refreshPanel() }
     func menuDidClose(_: NSMenu) { menuOpen = false }
 
     private func startSampler() {
         proc?.terminate()
         proc = nil
+        fallbackTimer?.invalidate()
+        fallbackTimer = nil
         buf.removeAll(keepingCapacity: true)
 
-        let bin = ("~/.local/bin/macmon" as NSString).expandingTildeInPath
-        guard FileManager.default.isExecutableFile(atPath: bin) else { return }
+        macmonAvailable = FileManager.default.isExecutableFile(atPath: macmonPath)
+        meter.macmonAvailable = macmonAvailable
+        panel.macmonAvailable = macmonAvailable
+
+        // 没有 macmon：GPU / 内存 / 温度 无从取得（显示"—"），
+        // 但 CPU 与逐核仍由本 App 自己采样，不能跟着一起停摆——
+        // 这里用独立 Timer 驱动，而不是依赖 macmon 的 JSON 到达。
+        guard macmonAvailable else {
+            scheduleCPUTick()
+            meter.needsDisplay = true
+            return
+        }
 
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: bin)
+        p.executableURL = URL(fileURLWithPath: macmonPath)
         p.arguments = ["pipe", "-i", String(intervalMs)]
         p.standardError = FileHandle.nullDevice
 
@@ -451,6 +507,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         try? p.run()
         proc = p
+    }
+
+    /// macmon 缺失时的兜底心跳
+    private func scheduleCPUTick() {
+        fallbackTimer?.invalidate()
+        let t = Timer(timeInterval: Double(intervalMs) / 1000.0, repeats: true) { [weak self] _ in
+            self?.tickCPU()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        fallbackTimer = t
+    }
+
+    private func tickCPU() {
+        let s = cpuSampler.sample()
+        if let load = s.overall { cpuLoad = load }
+        if !s.perCore.isEmpty { panel.cores = s.perCore }
+        meter.cpu = cpuLoad
+        panel.cpu = cpuLoad
+        append(&panel.cpuHist, cpuLoad)
+        meter.needsDisplay = true
     }
 
     private func enqueue(_ d: Data) {
@@ -481,7 +557,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let line = Data(buf.prefix(upTo: idx))
             buf.removeSubrange(buf.startIndex...idx)
             guard let dict = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-            latest = dict
             apply(dict)
             if menuOpen { refreshPanel() }
         }

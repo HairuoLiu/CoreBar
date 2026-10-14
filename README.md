@@ -40,6 +40,12 @@ Same panel in dark mode:
 
 ![panel, dark](docs/panel-dark.png)
 
+And if `macmon` is not installed — CPU and per-core still work, the rest degrades to `—` instead of a misleading `0 %`:
+
+![status bar without macmon](docs/statusbar-no-macmon-light.png)
+
+![panel without macmon](docs/panel-no-macmon-light.png)
+
 > These images are rendered by the app's own `draw(_:)` code against real sampled data, not composited screenshots — see [Reproducing the screenshots](#reproducing-the-screenshots).
 
 ## Features
@@ -47,6 +53,7 @@ Same panel in dark mode:
 - **Status bar** — compact CPU / GPU / memory bars with percentages. Temperature is optional and off by default.
 - **Click to expand** — four full-width area charts in a 2 × 2 grid (CPU, GPU, memory, temperature), each with its current value on the header row, plus a per-core bar row underneath.
 - **Every core is counted.** CPU utilization is sampled by the app itself through Mach `host_processor_info`, so all cores appear — 12 on an M6-class chip. The count is read from the kernel, never hard-coded.
+- **CPU works without macmon.** The sampler runs on its own timer, so a missing macmon costs you GPU / memory / temperature and nothing else. Those three render as `—` rather than `0 %`, and the menu gains a one-click link to the install instructions.
 - **No watts in the status bar.** The status bar is for utilization; wattage was deliberately left out because it does not change the decisions you make while coding.
 - **Refresh interval** — 1 s / 2 s / 5 s, switchable from the menu.
 - **Light and dark** aware, with semantic color thresholds (≥ 75 % turns red, ≥ 40 % amber).
@@ -57,7 +64,7 @@ Same panel in dark mode:
 
 - macOS 13.0 or later, Apple Silicon (Intel is not supported — a menu-bar meter is pointless there).
 - Xcode Command Line Tools (`swiftc`).
-- [macmon](https://github.com/vladkens/macmon) installed at `~/.local/bin/macmon`. **This is a hard requirement, not an optional extra.** MacMonBar contains zero lines of macmon's code — it is a clean-room Swift reimplementation — but it shells out to the `macmon` binary at runtime for GPU, memory and temperature, and the JSON stream is also what drives the sampling clock. Without macmon nothing updates at all: the meter sits at 0 % forever. (Verified: with macmon absent, `apply` is never called and the status bar draws exactly once.)
+- [macmon](https://github.com/vladkens/macmon) installed at `~/.local/bin/macmon` — **required for GPU, memory and temperature; optional for CPU.** MacMonBar contains zero lines of macmon's code (it is a clean-room Swift reimplementation) but it shells out to the `macmon` binary at runtime for those three metrics. CPU utilization and per-core data come from the app's own Mach sampler and work regardless.
 
 ## Build and run
 
@@ -81,18 +88,24 @@ or, if you prefer no package manager, drop the prebuilt arm64 binary from the [r
 ## How it works
 
 ```
-                         ┌─────────────────────────────┐
-   macmon pipe -i 1000  │  JSON lines on stdout        │
-   (child Process) ────▶│  gpu_scaled_ratio            │────┐
-                         │  memory.ram_usage / ram_total│    │
-                         │  temp.cpu_temp_avg           │    │
-                         └─────────────────────────────┘    │
-                                                           ▼
-   Mach host_processor_info ──▶ per-core user/system/nice/idle ticks
-   (PROCESSOR_CPU_LOAD_INFO)      ▼
-                                delta-based utilization
-                                for ALL N cores ──▶ MeterView (status bar)
-                                                  └▶ PanelView (expanded)
+  [macmon installed]  macmon pipe -i 1000  (child Process)
+                      stdout JSON  ->  gpu_scaled_ratio
+                                      ->  memory.ram_usage / ram_total
+                                      ->  temp.cpu_temp_avg
+                                          |
+                                          +--> GPU / memory / temperature
+                                          |     (macmon missing -> these show "—")
+
+  [always]            Timer @ intervalMs          Mach host_processor_info
+                      independent heartbeat  -->  (PROCESSOR_CPU_LOAD_INFO)
+                      does NOT wait on macmon          |
+                                                       v
+                                          per-core user/system/nice/idle ticks
+                                                       |
+                                                       v
+                                          delta-based utilization
+                                          for ALL N cores ---> MeterView (status bar)
+                                                            -> PanelView (expanded)
 ```
 
 **CPU utilization is computed locally, not taken from macmon.** macmon's `cpu_usage_pct` is a *frequency-weighted residency* metric — how much time a core spends at a given DVFS operating point — not "is the core busy". Under a 12-thread all-core load the two disagree by a factor of ~1.7:
@@ -140,12 +153,14 @@ Two of the four metrics are trivial to replace natively. Two are not.
 
 | Metric | Native replacement | Effort |
 |---|---|---|
-| CPU / per-core | already native | done |
+| CPU / per-core | already native — runs on its own timer | done |
 | Memory | `host_statistics64` + `vm_statistics64` | ~30 lines, easy |
 | GPU utilization | IOReport private framework | hard, breaks across OS releases |
 | Temperature | no public API — IOHID / SMC | hard, breaks across OS releases |
 
 The two hard ones are precisely what macmon already solves, and they are precisely the ones that break on every macOS update. Reimplementing them would trade a 9 MiB child process for a permanent maintenance burden — and would make the app *less* reliable, not more.
+
+Until 0.2.0 the coupling was worse than it looks: `cpuSampler.sample()` was only ever called from `apply()`, which only ran when a complete JSON line arrived from macmon's pipe. With macmon absent the whole app froze at 0 % — CPU included. The sampler now has its own `Timer`, so the dependency is honestly scoped to the three metrics it actually supplies.
 
 The name stays for the same reason: `MacMonBar` says what it is, a menu bar for macmon. Renaming it while still shelling out to macmon would be less honest, not more.
 
@@ -205,6 +220,8 @@ view.draw(view.bounds)
 
 This needs no screen-recording permission and cannot drift from what the app actually renders. To regenerate them, take `src/main.swift`, replace the `NSApplication.shared` bootstrap at the bottom with a collector that reads `macmon pipe -i 200` for ~26 seconds, then render the views at `scale: 2` (panel) and `scale: 3` (status bar) in both `.aqua` and `.darkAqua`.
 
+The two `-no-macmon-` images are the same pipeline with `macmonAvailable = false` and the GPU / memory / temperature histories cleared — that is the degraded state, not a hand-edited mock-up.
+
 ## `tools/`
 
 Small, single-purpose scripts — kept because every number in this README comes from one of them.
@@ -224,6 +241,19 @@ Compile any of them with `swiftc -O tools/<name>.swift -o /tmp/<name>`.
 
 - [macmon](https://github.com/vladkens/macmon) by vladkens — the sudoless Apple Silicon monitor this app fronts for. MIT.
 - Per-core accuracy cross-checked against [mactop](https://github.com/context-labs/mactop).
+
+## Changelog
+
+### 0.2.0 — 2026-10-13
+
+- **Fixed:** with `macmon` absent the app froze at 0 % for *every* metric, CPU included, because `cpuSampler.sample()` was only reachable through macmon's JSON. CPU and per-core now run on an independent `Timer`.
+- **Fixed:** GPU / memory / temperature now render `—` instead of a misleading `0 %` when their data source is missing.
+- **Added:** a menu entry linking to macmon's install instructions, shown only when macmon is absent.
+- **Removed:** dead code — `kLabel`, `CPUCoreSampler.coreCount`, `AppDelegate.latest` (all write-only or unused).
+
+### 0.1.0 — 2026-10-13
+
+- First release.
 
 ## License
 
