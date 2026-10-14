@@ -4,7 +4,8 @@ import Darwin
 
 // MacMonBar — 菜单栏版 macmon
 //
-// 状态栏：CPU / GPU / 内存 三条进度条 + 温度（默认关闭，可自行打开）
+// 状态栏：CPU / GPU / 内存 百分比 + 温度（默认关闭）；指标间用细竖线分隔
+//          进度条默认关闭（菜单可开启）；百分比按占用率着色默认开启（绿<50% / 琥珀50-80% / 红≥80%）
 // 面板：四项趋势图，2 行 × 2 列；底部默认显示 12 个核的逐核柱状图（可关）
 //
 // 数据来源：
@@ -23,8 +24,8 @@ extension NSColor {
 }
 
 private let kPad: CGFloat = 14          // 面板左右内边距，避免顶到边框
-private let kLabelSmall = NSFont.systemFont(ofSize: 10, weight: .medium)
-private let kValue = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+private let kLabelSmall = NSFont.systemFont(ofSize: 11, weight: .medium)
+private let kValue = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
 
 private func isDark(_ v: NSView) -> Bool {
     v.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -42,8 +43,8 @@ private func tempColor(_ v: NSView, _ c: Double) -> NSColor {
 }
 
 private func levelColor(_ v: NSView, _ ratio: Double) -> NSColor {
-    if ratio >= 0.75 { return hotColor(v) }
-    if ratio >= 0.40 { return isDark(v) ? NSColor(hex: 0xFFC24A) : NSColor(hex: 0xB26A00) }
+    if ratio >= 0.80 { return hotColor(v) }
+    if ratio >= 0.50 { return isDark(v) ? NSColor(hex: 0xFFC24A) : NSColor(hex: 0xB26A00) }
     return memColor(v)
 }
 
@@ -135,21 +136,40 @@ final class MeterView: NSView {
     var mem: Double = 0
     var temp: Double = 0
     var showTemp = false                 // 默认关闭
+    var showBars = false                 // 默认隐藏状态栏进度条（菜单可开启）
+    var colorPct = true                  // 百分比按占用率着色，默认开启（菜单可关闭）
     var macmonAvailable = true           // false 时 GPU / 内存 / 温度显示"—"
 
     private enum L {
-        static let label: CGFloat = 27    // 需容纳 10pt medium 的 "CPU"/"GPU"，20 会被裁成 "CP"
+        static let label: CGFloat = 30    // 需容纳 11pt medium 的 "CPU"/"内存"
         static let bar: CGFloat = 24
-        static let value: CGFloat = 26
+        static let value: CGFloat = 34    // 容纳 13pt 等宽 "100%"
         static let temp: CGFloat = 34
-        static let gap: CGFloat = 6
-        static var unit: CGFloat { label + 3 + bar + 4 + value + gap }
+        static let gap: CGFloat = 14      // 指标之间的间隔（含分隔线）
+        static let sepH: CGFloat = 14     // 分隔线高度
+    }
+
+    private var unit: CGFloat {
+        let barPart = showBars ? (L.bar + 4) : 0
+        return L.label + 3 + barPart + L.value
     }
 
     var preferredWidth: CGFloat {
-        var w: CGFloat = 4 + L.unit * 3
-        if showTemp { w += L.temp }
-        return w + 4
+        let gaps = showTemp ? 3 : 2
+        return 4 + unit * 3 + L.gap * CGFloat(gaps) + (showTemp ? L.temp : 0) + 4
+    }
+
+    /// 指标之间画一条细竖线分隔，并返回下一个指标起点
+    private func advanceAfter(_ x: CGFloat) -> CGFloat {
+        let nx = x + L.gap
+        let dx = x + L.gap / 2
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: dx, y: (bounds.height - L.sepH) / 2))
+        path.line(to: NSPoint(x: dx, y: (bounds.height + L.sepH) / 2))
+        path.lineWidth = 1
+        NSColor.labelColor.withAlphaComponent(0.18).setStroke()
+        path.stroke()
+        return nx
     }
 
     override var intrinsicContentSize: NSSize { NSSize(width: preferredWidth, height: 22) }
@@ -157,9 +177,12 @@ final class MeterView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         var x: CGFloat = 4
         x = metric(name: "CPU", ratio: cpu, available: true, series: cpuColor(self), x: x)
+        x = advanceAfter(x)
         x = metric(name: "GPU", ratio: gpu, available: macmonAvailable, series: gpuColor(self), x: x)
+        x = advanceAfter(x)
         x = metric(name: "内存", ratio: mem, available: macmonAvailable, series: memColor(self), x: x)
         if showTemp {
+            x = advanceAfter(x)
             let r = NSRect(x: x, y: 0, width: L.temp, height: bounds.height)
             if macmonAvailable {
                 drawText(String(format: "%.0f°C", temp), in: r, font: kValue, color: tempColor(self, temp), align: .right)
@@ -172,29 +195,35 @@ final class MeterView: NSView {
     /// available = false 表示数据源缺失，显示"—"而不是误导性的 0%
     private func metric(name: String, ratio: Double, available: Bool, series: NSColor, x: CGFloat) -> CGFloat {
         drawText(name, in: NSRect(x: x, y: 0, width: L.label, height: bounds.height),
-                 font: kLabelSmall, color: .secondaryLabelColor)
+                 font: kLabelSmall, color: .secondaryLabelColor, align: .right)
         var cx = x + L.label + 3
 
-        let barRect = NSRect(x: cx, y: bounds.midY - 3.5, width: L.bar, height: 7)
-        NSColor.labelColor.withAlphaComponent(0.15).setFill()
-        NSBezierPath(roundedRect: barRect, xRadius: 3.5, yRadius: 3.5).fill()
-        cx += L.bar + 4
+        if showBars {
+            let barRect = NSRect(x: cx, y: bounds.midY - 3.5, width: L.bar, height: 7)
+            NSColor.labelColor.withAlphaComponent(0.15).setFill()
+            NSBezierPath(roundedRect: barRect, xRadius: 3.5, yRadius: 3.5).fill()
+            if available {
+                let pct = min(max(ratio, 0), 1)
+                if pct > 0.01 {
+                    var f = barRect
+                    f.size.width = max(4, L.bar * CGFloat(pct))
+                    (pct >= 0.80 ? hotColor(self) : series).setFill()
+                    NSBezierPath(roundedRect: f, xRadius: 3.5, yRadius: 3.5).fill()
+                }
+            }
+            cx += L.bar + 4
+        }
 
         let valueRect = NSRect(x: cx, y: 0, width: L.value, height: bounds.height)
         if available {
             let pct = min(max(ratio, 0), 1)
-            if pct > 0.01 {
-                var f = barRect
-                f.size.width = max(4, L.bar * CGFloat(pct))
-                (pct >= 0.75 ? hotColor(self) : series).setFill()
-                NSBezierPath(roundedRect: f, xRadius: 3.5, yRadius: 3.5).fill()
-            }
+            let color = colorPct ? levelColor(self, pct) : NSColor.labelColor
             drawText(String(format: "%.0f%%", pct * 100), in: valueRect,
-                     font: kValue, color: levelColor(self, pct), align: .right)
+                     font: kValue, color: color, align: .right)
         } else {
             drawText("—", in: valueRect, font: kValue, color: .tertiaryLabelColor, align: .right)
         }
-        return cx + L.value + L.gap
+        return cx + L.value
     }
 
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
@@ -418,6 +447,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tempItem.state = .off                // 默认关闭
         menu.addItem(tempItem)
 
+        let barsItem = NSMenuItem(title: "状态栏显示进度条", action: #selector(toggleBars(_:)), keyEquivalent: "")
+        barsItem.target = self
+        barsItem.state = .off                // 默认隐藏
+        menu.addItem(barsItem)
+
+        let colorItem = NSMenuItem(title: "百分比颜色区分", action: #selector(toggleColor(_:)), keyEquivalent: "")
+        colorItem.target = self
+        colorItem.state = .on                // 默认开启
+        menu.addItem(colorItem)
+
         let intervalItem = NSMenuItem(title: "刷新间隔", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for ms in [1000, 2000, 5000] {
@@ -449,6 +488,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         meter.showTemp.toggle()
         sender.state = meter.showTemp ? .on : .off
         statusItem.length = meter.preferredWidth
+        meter.needsDisplay = true
+    }
+
+    @objc private func toggleBars(_ sender: NSMenuItem) {
+        meter.showBars.toggle()
+        sender.state = meter.showBars ? .on : .off
+        statusItem.length = meter.preferredWidth
+        meter.needsDisplay = true
+    }
+
+    @objc private func toggleColor(_ sender: NSMenuItem) {
+        meter.colorPct.toggle()
+        sender.state = meter.colorPct ? .on : .off
         meter.needsDisplay = true
     }
 

@@ -24,9 +24,13 @@ The menu bar is also the only one of the three "widget" options that can actuall
 
 ## Screenshots
 
-Status bar (default — temperature hidden):
+Status bar (default — colour-coded percentages, thin dividers between the three metrics, no gauges, temperature hidden):
 
 ![status bar, light](docs/statusbar-light.png)
+
+Status bar with the optional gauges switched on (colour coding is on by default):
+
+![status bar with gauges, light](docs/statusbar-bars-light.png)
 
 Status bar with temperature enabled:
 
@@ -50,13 +54,15 @@ And if `macmon` is not installed — CPU and per-core still work, the rest degra
 
 ## Features
 
-- **Status bar** — compact CPU / GPU / memory bars with percentages. Temperature is optional and off by default.
+- **Status bar** — CPU / GPU / memory percentages in three groups, separated by thin vertical dividers and with each label right-aligned against its own number, so it is obvious which value belongs to which metric. Temperature is optional and off by default.
+- **Colour-coded percentages.** Each percentage is coloured by its own load — green below 50 %, amber from 50 %, red from 80 % — so a glance tells you what is busy without reading the numbers. On by default; the menu can put it back to plain text.
+- **Optional gauges.** The little level bars are a separate menu toggle, off by default. Plain percentages are the least noisy thing to keep in the corner of your screen all day; the gauges are there for when you want to read a level at a glance rather than a number.
 - **Click to expand** — four full-width area charts in a 2 × 2 grid (CPU, GPU, memory, temperature), each with its current value on the header row, plus a per-core bar row underneath.
 - **Every core is counted.** CPU utilization is sampled by the app itself through Mach `host_processor_info`, so all cores appear — 12 on an M6-class chip. The count is read from the kernel, never hard-coded.
 - **CPU works without macmon.** The sampler runs on its own timer, so a missing macmon costs you GPU / memory / temperature and nothing else. Those three render as `—` rather than `0 %`, and the menu gains a one-click link to the install instructions.
 - **No watts in the status bar.** The status bar is for utilization; wattage was deliberately left out because it does not change the decisions you make while coding.
 - **Refresh interval** — 1 s / 2 s / 5 s, switchable from the menu.
-- **Light and dark** aware, with semantic color thresholds (≥ 75 % turns red, ≥ 40 % amber).
+- **Light and dark** aware, with semantic colour thresholds (green below 50 %, amber from 50 %, red from 80 %).
 - `LSUIElement` — no Dock icon, no window, nothing to switch to.
 - **No dependencies.** AppKit + Foundation + Mach only. No SwiftPM, no Carthage, no SPM packages.
 
@@ -272,6 +278,13 @@ Compile any of them with `swiftc -O tools/<name>.swift -o /tmp/<name>`.
 - Per-core accuracy cross-checked against [mactop](https://github.com/context-labs/mactop).
 
 ## Changelog
+
+### 0.2.2 — 2026-10-13
+
+- **Status bar redesigned.** Fonts are larger (labels 10 → 11 pt, values 11 → 13 pt, with the reserved label/value widths widened to match). The little gauges and the per-metric percentage colouring are now two independent menu toggles: the gauges default to **off**, while the percentages are colour-coded by load **on by default** — green below 50 %, amber from 50 %, red from 80 %.
+- **Dividers between metrics.** Thin vertical dividers now separate CPU / GPU / memory, and each label is right-aligned against its own percentage. This fixes "which number belongs to which metric" — previously the value sat far from its own label yet right up against the next metric's label.
+- **Cost unchanged:** measured main-process CPU is unchanged at ~0.26 % (the ~0.20 % status-bar redraw figure in "Cost decomposition" still holds) — dropping the gauges saves only a few rounded-rect fills, which the larger text offsets.
+- **Docs:** screenshots regenerated against the new defaults, plus a new `statusbar-bars-light.png`; the expanded panel was re-rendered too because it shares the same colour-threshold function.
 
 ### 0.2.1 — 2026-10-13
 
