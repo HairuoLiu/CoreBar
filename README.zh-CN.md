@@ -4,7 +4,7 @@
 
 手写 733 行 Swift，零第三方依赖。占用 **18.5 MiB 内存、0.43% 单核**，而把 [macmon](https://github.com/vladkens/macmon) 挂在终端窗口里要花 **≈75 MiB**。
 
-[English →](./README.md) · [完整功能](docs/features.md) · [更新记录](CHANGELOG.md)
+[English →](./README.md) · [完整功能](docs/features.md) · [更新记录](CHANGELOG.md) · [**演讲稿 →**](TALK.zh-CN.md)
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -170,6 +170,7 @@ pgrep -x MacMonBar >/dev/null && echo "OK: MacMonBar running" || { echo "启动�
 
 | 页面 | 内容 |
 |---|---|
+| [TALK.zh-CN.md](TALK.zh-CN.md) | **那个 75 兆的窗口**——18 分钟演讲稿，讲"测量"四次抓到我自信地犯错 |
 | [docs/performance.md](docs/performance.md) | 内存 / CPU / 功耗实测、开销分解、刷新间隔表 |
 | [docs/how-it-works.md](docs/how-it-works.md) | 数据流、Mach 采样器、为何与 macmon 的 CPU 数值不同、`NSMenu` 事件循环坑 |
 | [docs/macmon.md](docs/macmon.md) | 与 macmon 的关系，以及为什么保留这个依赖 |

@@ -22,6 +22,14 @@ Dark mode. / 深色模式。
 
 ![status bar, dark](statusbar-dark.png)
 
+Dark mode, gauges on. / 深色模式，开启进度条。
+
+![status bar with gauges, dark](statusbar-bars-dark.png)
+
+Dark mode, temperature on. / 深色模式，开启温度。
+
+![status bar with temperature, dark](statusbar-temp-dark.png)
+
 ## Expanded panel / 展开面板
 
 Four trend charts (2 × 2) plus a per-core bar row. / 四张趋势图（2 × 2）加逐核柱状图。

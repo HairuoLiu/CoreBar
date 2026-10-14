@@ -4,7 +4,7 @@
 
 A hand-written 733-line Swift app with zero third-party dependencies. It costs **18.5 MiB and 0.43 % of a core** where keeping [macmon](https://github.com/vladkens/macmon) in a Terminal window costs **≈75 MiB**.
 
-[中文说明 →](./README.zh-CN.md) · [Full feature list](docs/features.md) · [Changelog](CHANGELOG.md)
+[中文说明 →](./README.zh-CN.md) · [Full feature list](docs/features.md) · [Changelog](CHANGELOG.md) · [**The talk →**](TALK.md)
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -170,6 +170,7 @@ Dark mode, temperature enabled, and the degraded panel: **[docs/screenshots.md](
 
 | Page | What is in it |
 |---|---|
+| [TALK.md](TALK.md) | **The 75-Megabyte Window** — an 18-minute talk on the four times measurement caught me being confidently wrong |
 | [docs/performance.md](docs/performance.md) | Memory / CPU / power measurements, cost decomposition, refresh-interval table |
 | [docs/how-it-works.md](docs/how-it-works.md) | Data flow, the Mach sampler, why macmon's CPU figure differs, the `NSMenu` event-loop bug |
 | [docs/macmon.md](docs/macmon.md) | The relationship to macmon, and why the dependency stays |
