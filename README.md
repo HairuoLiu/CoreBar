@@ -12,13 +12,13 @@ One status-bar item. Four trend charts. One 540-line Swift file. **Zero third-pa
 
 ## Why
 
-`macmon` is an excellent sudoless Apple Silicon monitor, but it lives in a terminal. Running it in Terminal.app keeps a window, a tab, a login shell and a scrollback buffer alive — and that costs far more than the monitor itself.
+`macmon` is an excellent sudoless Apple Silicon monitor, but it lives in a terminal. Running it in Terminal.app keeps a window, a tab, a login shell and a scrollback buffer alive — four times the monitor's own memory; in CPU terms the two are actually even (both under 1 % of a core).
 
 | Route | Physical footprint | Notes |
 |---|---|---|
-| `macmon` in Terminal.app | **97 – 121 MiB** | Terminal window + tab + shell + scrollback |
-| MacMonBar, menu closed | **≈ 22 MiB** | 13.1 MiB app + 9.0 MiB `macmon pipe` child |
-| MacMonBar, menu open | **≈ 29 MiB** | 20.1 MiB app + 9.0 MiB child |
+| `macmon` in Terminal.app | **≈ 75 MiB** | Terminal.app 72.2 MiB + `macmon` TUI 2.7 MiB |
+| MacMonBar, menu closed | **≈ 18.5 MiB** | 12.9 MiB app + 5.6 MiB `macmon pipe` child |
+| MacMonBar, menu open | **≈ 24 MiB** | ≈ 18 MiB app (+5 on first open) + 5.6 MiB child |
 
 The menu bar is also the only one of the three "widget" options that can actually refresh at 1 Hz. Desktop widgets and Notification-Center widgets are the **same** WidgetKit technology: timeline-driven and throttled to roughly minute granularity, unable to sample on their own, and they require a host app plus an App Group — so they end up *heavier* than the thing they wrap.
 
@@ -170,12 +170,16 @@ The name stays for the same reason: `MacMonBar` says what it is, a menu bar for 
 
 Machine: Apple M6, 32 GB, macOS 13-era SDK. Physical footprint measured via `libproc`'s `proc_pid_rusage` (`ri_phys_footprint`), not RSS — footprint is the correct cross-process memory metric on macOS.
 
+> **Full re-measurement, 2026-10-13.** The re-measurement also caught a unit bug in the tooling: `ri_user_time` / `ri_system_time` are in Mach ticks (41.6667 ns each on Apple Silicon), not nanoseconds; all three measuring scripts had divided by `1e9` as if they were nanoseconds, **understating CPU time by 41.67×**. The fix was validated against a single-thread busy loop (which must read back ≈100 % of a core). Every number below comes from the corrected `tools/measure.py` and siblings.
+
 | | Terminal route | MacMonBar, menu closed | MacMonBar, menu open |
 |---|---|---|---|
-| Resident memory | 97 – 121 MiB | ≈ 22 MiB | ≈ 29 MiB |
-| CPU time | ~0.07 % of a core | ~0.016 % of a core | ~0.023 % of a core |
+| Resident memory | ≈ 75 MiB | 18.5 MiB | ≈ 24 MiB |
+| CPU time | ≈ 0.62 % of a core | ≈ 0.75 % of a core | ≈ 1.05 % of a core |
 
-Opening the menu costs about **7 MiB** (13.1 → 20.1 MiB): the menu window and the panel's backing store only exist once you click the icon. The `macmon pipe` child contributes a flat ~9 MiB either way.
+Broken down: the terminal route is Terminal.app (0.225 % / 72.2 MiB) plus `macmon` in TUI mode (0.398 % / 2.7 MiB); the closed state is the app itself (0.30 % / 12.9 MiB) plus the `macmon pipe` child (0.465 % / 5.6 MiB); the open state is 0.585 % for the app plus ≈0.47 % for the child.
+
+Opening the menu for the first time costs about **5 MiB** (bare-binary measurement 8.5 → 13.3 MiB): the menu window and the panel's backing store only exist once you click the icon. Opening it repeatedly costs nothing further (nine consecutive opens measured flat). Long-running instances grow slowly — a 1.5-hour-old instance sat at 21.0 MiB, presumably allocation fragmentation from the once-a-second JSON parsing.
 
 ### Power
 
@@ -183,24 +187,49 @@ Whole-machine power draw cannot resolve an app this small. In a three-way A/B �
 
 - idle: **8.60 W**
 - 12 threads at 100 %: **19.13 W**
-- ⇒ **10.53 W per 100 % of the 12-core package** (≈ 0.105 W per percentage point)
+- ⇒ **10.53 W per 100 % of the 12-core package** (≈ 0.105 W per percentage point, ≈ 0.88 W per core at full tilt)
 
-Each state was measured twice over 120-second windows (`tools/power_ab.py`):
+Each state was measured over 8-second-plus windows, multiple rounds (`tools/measure.py`):
 
 | State | CPU time | Incremental power | Energy per minute |
 |---|---|---|---|
-| Menu bar resident, menu **not** clicked | 0.0092 – 0.0096 core-s/min | ≈ 0.14 mW | ≈ 0.008 J |
-| Menu open, 4 charts + 12 core bars redrawing at 1 Hz | 0.0128 – 0.0145 core-s/min | ≈ 0.20 mW | ≈ 0.012 J |
+| Menu bar resident, menu **not** clicked | 0.45 core-s/min | ≈ 6.6 mW | ≈ 0.40 J |
+| Menu open, 4 charts + 12 core bars redrawing at 1 Hz | 0.63 core-s/min | ≈ 9.2 mW | ≈ 0.55 J |
 
-**Is there a difference? Yes in relative terms, no in absolute ones.** Opening the menu does about **45 % more work** — the two ranges do not overlap — but that is ≈0.06 mW, or ≈0.004 J per minute. That is roughly **3,500× below the ±0.71 W noise floor** of whole-machine measurement, and about **0.002 % of the machine's idle draw**. For scale, a minute of ordinary web browsing pushes whole-machine draw up by a few watts, on the order of 100 – 200 J per minute; this app costs about 0.01 J.
+Power is linearly extrapolated from the calibration, i.e. an **upper bound**: a 0.75 % duty cycle never actually ramps core frequency, so the true increment is lower.
 
-Run continuously for a year the two states come to ≈1.2 Wh and ≈1.7 Wh — about 1.5 % and 2.2 % of one full charge on an 80 Wh battery.
+**Is there a difference? Yes in relative terms, no in absolute ones.** Opening the menu does about **40 % more work**, worth ≈2.6 mW or ≈0.15 J per minute — still ≈**270× below** the ±0.71 W noise floor of whole-machine measurement, and about **0.03 % of the machine's idle draw**. For scale, a minute of ordinary web browsing pushes whole-machine draw up by a few watts, on the order of 100 – 200 J per minute; this app costs 0.4 – 0.55 J.
 
-The app's own cost is also dominated by the `macmon pipe` child it spawns (≈0.007 core-s/min), not by the drawing.
+Run continuously for a year the two states come to ≈**58 Wh** and ≈**80 Wh** — about 0.7 and 1.0 full charges on an 80 Wh battery, or 0.16 / 0.22 Wh per day, i.e. roughly **0.2 % / 0.3 % of a charge per day**. The Mac mini is a desktop; the practical meaning of these numbers is the electricity bill: a few cents a year.
+
+Most of the app's own cost is the `macmon pipe` child it spawns (0.465 % = 0.28 core-s/min, 62 % of the whole stack); second is the status-bar `MeterView` redrawing every second (≈0.20 %) — which costs more than all four trend charts combined. See below.
+
+### Cost decomposition (measured, 2026-10-13)
+
+The app broken into removable blocks, each measured (menu closed, 1 s refresh baseline):
+
+| Component | CPU | Notes |
+|---|---|---|
+| `macmon pipe` child | 0.465 % | separate process; supplies GPU / memory / temperature |
+| Status-bar `MeterView` redraw + status-item compositing | ≈ 0.20 % | **the single most expensive piece** — more than all 4 trend charts combined |
+| JSON ingestion (pipe + parse + `apply` + sampling) | ≈ 0.04 % | |
+| Timers + AppKit floor | ≈ 0.04 % | an empty AppKit agent app costs 0.004 % by itself |
+
+Refresh interval (the menu already offers 1 / 2 / 5 s; measured):
+
+| Interval | App | Child | Total | vs. default |
+|---|---|---|---|---|
+| 1 s (default) | 0.270 % | 0.465 % | 0.735 % | — |
+| 2 s | 0.172 % | 0.235 % | 0.407 % | −45 % |
+| 5 s | 0.123 % | 0.102 % | 0.225 % | −69 % |
+
+The open-menu increment (0.315 %) breaks down further: trend-chart data paths 0.130 %, per-core bars 0.022 %, menu event tracking and panel compositing 0.163 %.
+
+On GPU: MacMonBar itself measures **0.000 %** — it is a pure AppKit 2D app, rasterized on the CPU, with panel compositing billed to WindowServer. "Reducing GPU usage" is not a thing that exists for this app.
 
 ## Design notes
 
-**Why the menu bar and not a widget.** Ranked by resource cost and complexity, the menu bar wins on every axis: it is the only option that can sample at 1 Hz, it needs no host app, no App Group, and no timeline plumbing, and it costs roughly a quarter of the Terminal route. A desktop or Notification-Center widget would be the *same* WidgetKit stack either way, just with extra ceremony.
+**Why the menu bar and not a widget.** Ranked by resource cost and complexity, the menu bar wins on memory (about a quarter of the Terminal route, 18.5 vs 75 MiB) and on purity of form: it is the only option that can sample at 1 Hz without keeping a whole terminal session alive, needs no host app, no App Group, and no timeline plumbing. In CPU terms the two routes are actually even — though the terminal route also pays a WindowServer bill for compositing its window that never shows up in the process table. A desktop or Notification-Center widget would be the *same* WidgetKit stack either way, just with extra ceremony.
 
 **Charts, not text.** Percentages alone cannot show a trend. Four small multiples — one metric each, stacked — are used instead of two overlaid sparklines, because overlaid lines are unreadable when they cross. Each chart carries its current value inline on the header row, a 50 % dashed reference line, an 18 % area fill, and a dot on the latest sample.
 
@@ -243,6 +272,11 @@ Compile any of them with `swiftc -O tools/<name>.swift -o /tmp/<name>`.
 - Per-core accuracy cross-checked against [mactop](https://github.com/context-labs/mactop).
 
 ## Changelog
+
+### 0.2.1 — 2026-10-13
+
+- **Fixed (tooling):** the three scripts under `tools/` treated `ri_user_time` / `ri_system_time` as nanoseconds and divided by `1e9`; the real unit is Mach ticks (41.6667 ns), so CPU time was understated 41.67×. Corrected via `mach_timebase_info` and validated against a single-thread busy loop. Every power / CPU figure in the README recomputed.
+- **Docs:** new "Cost decomposition" section — per-component measurements (macmon child 0.465 %, status-bar redraw 0.20 %, JSON ingestion 0.04 %, AppKit floor 0.04 %) plus a 1 / 2 / 5 s refresh-interval comparison.
 
 ### 0.2.0 — 2026-10-13
 

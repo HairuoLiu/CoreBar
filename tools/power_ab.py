@@ -13,6 +13,17 @@ import subprocess
 import sys
 import time
 
+# --- Mach 时间基准 ---------------------------------------------------------
+# ri_user_time / ri_system_time 的单位是 Mach tick，不是纳秒。
+# Apple Silicon 上 numer/denom = 125/3，即 1 tick = 41.6667 ns；
+# 直接 /1e9 会把 CPU 时间低估 41.67 倍。
+class _MachTB(ctypes.Structure):
+    _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+_tb = _MachTB()
+ctypes.CDLL("/usr/lib/libSystem.dylib").mach_timebase_info(ctypes.byref(_tb))
+NS_PER_TICK = _tb.numer / _tb.denom if _tb.denom else 1.0
+
+
 libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
 
 APP = "/Users/hai/Applications/MacMonBar.app/Contents/MacOS/MacMonBar"
@@ -39,7 +50,7 @@ def cpu_seconds(pid):
     r = RUsageV4()
     if libproc.proc_pid_rusage(pid, 4, ctypes.byref(r)) != 0:
         return None
-    return (r.utime + r.stime) / 1e9
+    return (r.utime + r.stime) * NS_PER_TICK / 1e9
 
 
 def child_pipe(main_pid):
