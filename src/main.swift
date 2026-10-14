@@ -4,9 +4,14 @@ import Darwin
 
 // MacMonBar — 菜单栏版 macmon
 //
-// 状态栏：CPU / GPU / 内存 百分比 + 温度（默认关闭）；指标间用细竖线分隔
+// 状态栏：CPU / GPU / RAM 百分比 + 温度（默认关闭）；指标间用细竖线分隔
+//          状态栏标签固定英文；菜单与面板文案按系统语言中英双语（见 Loc）
 //          进度条默认关闭（菜单可开启）；百分比按占用率着色默认开启（绿<50% / 琥珀50-80% / 红≥80%）
+//          状态栏标签 13pt semibold（与系统菜单栏同字号），在预留位内居中
 // 面板：四项趋势图，2 行 × 2 列；底部默认显示 12 个核的逐核柱状图（可关）
+// 配色分两套互不重叠的色系（见下方 MARK）：
+//          图表用身份色（CPU 蓝 / GPU 玫红 / 内存青 / 温度紫，刻意避开绿琥珀红）；
+//          数值用绿/琥珀/红梯度（百分比 <50/≥50/≥80%，温度 <60/≥60/≥80°C）
 //
 // 数据来源：
 //   · CPU 占用率 —— 本 App 自己用 Mach host_processor_info 统计全部 12 核
@@ -24,28 +29,44 @@ extension NSColor {
 }
 
 private let kPad: CGFloat = 14          // 面板左右内边距，避免顶到边框
-private let kLabelSmall = NSFont.systemFont(ofSize: 11, weight: .medium)
+private let kLabelSmall = NSFont.systemFont(ofSize: 11, weight: .medium)   // 面板图表标题
+private let kLabelBar = NSFont.systemFont(ofSize: 13, weight: .semibold)   // 状态栏标签：与系统菜单栏同字号（13pt），semibold 提分量
 private let kValue = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
 
 private func isDark(_ v: NSView) -> Bool {
     v.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 }
 
-private func cpuColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0x6BA4FF) : NSColor(hex: 0x1E6FD9) }
-private func gpuColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0xFFB340) : NSColor(hex: 0xE07B00) }
-private func memColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0x5DCAA5) : NSColor(hex: 0x1D9E75) }
+// MARK: - 配色：两套互不重叠的色系
+//
+// ① 身份色 —— 只归图表用（趋势线、左上角标签、状态栏进度条）：
+//    CPU 蓝 / GPU 玫红 / 内存青 / 温度紫。四种色相刻意避开绿、琥珀、红。
+// ② 数值色 —— 只归右侧的百分比与温度值用：
+//    绿（正常）/ 琥珀（偏高）/ 红（告警），按各自阈值变化。
+// 两套色永不混用：图表不会和穿同色的数值撞上。看一眼右边就知道谁忙，
+// 看一眼线的颜色就知道是谁。
+
+private func cpuSeriesColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0x6BA4FF) : NSColor(hex: 0x1E6FD9) }
+private func gpuSeriesColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0xE88AC8) : NSColor(hex: 0xB0449B) }
+private func memSeriesColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0x45C4D8) : NSColor(hex: 0x0E8FA8) }
+private func tempSeriesColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0xA888F2) : NSColor(hex: 0x7C59CF) }
+
 private func hotColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0xFF7B6B) : NSColor(hex: 0xC4433A) }
+private func warnColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0xFFC24A) : NSColor(hex: 0xB26A00) }
+private func okColor(_ v: NSView) -> NSColor { isDark(v) ? NSColor(hex: 0x5DCAA5) : NSColor(hex: 0x1D9E75) }
 
-private func tempColor(_ v: NSView, _ c: Double) -> NSColor {
-    if c >= 80 { return hotColor(v) }
-    if c >= 60 { return isDark(v) ? NSColor(hex: 0xFFC24A) : NSColor(hex: 0xB26A00) }
-    return memColor(v)
-}
-
+/// 数值梯度（百分比用）：绿 <50% / 琥珀 ≥50% / 红 ≥80%
 private func levelColor(_ v: NSView, _ ratio: Double) -> NSColor {
     if ratio >= 0.80 { return hotColor(v) }
-    if ratio >= 0.50 { return isDark(v) ? NSColor(hex: 0xFFC24A) : NSColor(hex: 0xB26A00) }
-    return memColor(v)
+    if ratio >= 0.50 { return warnColor(v) }
+    return okColor(v)
+}
+
+/// 温度数值：与百分比同一套绿/琥珀/红梯度，阈值按 °C（<60 / ≥60 / ≥80）
+private func tempValueColor(_ v: NSView, _ c: Double) -> NSColor {
+    if c >= 80 { return hotColor(v) }
+    if c >= 60 { return warnColor(v) }
+    return okColor(v)
 }
 
 private func drawText(_ s: String, in rect: NSRect, font: NSFont, color: NSColor, align: NSTextAlignment = .left) {
@@ -53,8 +74,27 @@ private func drawText(_ s: String, in rect: NSRect, font: NSFont, color: NSColor
     ps.alignment = align
     let attr: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: ps]
     let size = (s as NSString).size(withAttributes: attr)
+    // 预留位可能窄于实际文本（例如 "100%" 37.4pt 放进 34pt 的槽）：把绘制矩形至少放宽到文本
+    // 实际宽度，并按对齐方式重新锚定，否则 NSString 会把最后一个字符折到第二行、再被单行高度裁掉。
+    let w = max(rect.width, size.width + 1)
+    let x: CGFloat
+    switch align {
+    case .right:  x = rect.maxX - w
+    case .center: x = rect.midX - w / 2
+    default:      x = rect.minX
+    }
     let y = rect.midY - size.height / 2
-    (s as NSString).draw(in: NSRect(x: rect.minX, y: y, width: rect.width, height: size.height), withAttributes: attr)
+    (s as NSString).draw(in: NSRect(x: x, y: y, width: w, height: size.height), withAttributes: attr)
+}
+
+// MARK: - 中英双语
+// 按系统首选语言取串：zh-* → 中文，其余 → 英文。
+// 做成 var 而不是 computed property，是为了离屏渲染验证时能强制切语言。
+// 语言在启动时解析一次；改系统语言后需重启 App 才生效。
+// 状态栏的 CPU / GPU / RAM 标签按需求固定英文，不走这里。
+private enum Loc {
+    static var isChinese = (Locale.preferredLanguages.first?.hasPrefix("zh") == true)
+    static func t(_ zh: String, _ en: String) -> String { isChinese ? zh : en }
 }
 
 // MARK: - 全核 CPU 采样（Mach）
@@ -128,7 +168,7 @@ struct CPUCoreSampler {
     }
 }
 
-// MARK: - 状态栏：CPU / GPU / 内存 三条 + 温度
+// MARK: - 状态栏：CPU / GPU / RAM 三条 + 温度
 
 final class MeterView: NSView {
     var cpu: Double = 0
@@ -141,22 +181,25 @@ final class MeterView: NSView {
     var macmonAvailable = true           // false 时 GPU / 内存 / 温度显示"—"
 
     private enum L {
-        static let label: CGFloat = 30    // 需容纳 11pt medium 的 "CPU"/"内存"
+        static let pad: CGFloat = 3       // 状态项左右内边距
+        static let label: CGFloat = 32    // 容纳 13pt semibold 的 "RAM"（29.5）+ 居中余量
+        static let pair: CGFloat = 2      // 标签与数值之间的间隙
         static let bar: CGFloat = 24
-        static let value: CGFloat = 34    // 容纳 13pt 等宽 "100%"
-        static let temp: CGFloat = 34
-        static let gap: CGFloat = 14      // 指标之间的间隔（含分隔线）
+        // 数值左对齐、紧贴标签，右侧的余量留给分组间隔，所以槽位按常用最大值定尺：
+        static let value: CGFloat = 34    // "99%" = 29.1；罕见的 "100%"（37.4）向右溢出 3.4pt，仍不碰到分隔线
+        static let temp: CGFloat = 38     // 右对齐贴边；"99°C" = 32.1，"100°C"（40.4）向左溢出 2.4pt 由 gap 吸收
+        static let gap: CGFloat = 10      // 指标之间的间隔（含分隔线）
         static let sepH: CGFloat = 14     // 分隔线高度
     }
 
     private var unit: CGFloat {
-        let barPart = showBars ? (L.bar + 4) : 0
-        return L.label + 3 + barPart + L.value
+        let barPart = showBars ? (L.bar + 3) : 0
+        return L.label + L.pair + barPart + L.value
     }
 
     var preferredWidth: CGFloat {
         let gaps = showTemp ? 3 : 2
-        return 4 + unit * 3 + L.gap * CGFloat(gaps) + (showTemp ? L.temp : 0) + 4
+        return L.pad + unit * 3 + L.gap * CGFloat(gaps) + (showTemp ? L.temp : 0) + L.pad
     }
 
     /// 指标之间画一条细竖线分隔，并返回下一个指标起点
@@ -175,17 +218,17 @@ final class MeterView: NSView {
     override var intrinsicContentSize: NSSize { NSSize(width: preferredWidth, height: 22) }
 
     override func draw(_ dirtyRect: NSRect) {
-        var x: CGFloat = 4
-        x = metric(name: "CPU", ratio: cpu, available: true, series: cpuColor(self), x: x)
+        var x: CGFloat = L.pad
+        x = metric(name: "CPU", ratio: cpu, available: true, series: cpuSeriesColor(self), x: x)
         x = advanceAfter(x)
-        x = metric(name: "GPU", ratio: gpu, available: macmonAvailable, series: gpuColor(self), x: x)
+        x = metric(name: "GPU", ratio: gpu, available: macmonAvailable, series: gpuSeriesColor(self), x: x)
         x = advanceAfter(x)
-        x = metric(name: "内存", ratio: mem, available: macmonAvailable, series: memColor(self), x: x)
+        x = metric(name: "RAM", ratio: mem, available: macmonAvailable, series: memSeriesColor(self), x: x)  // 状态栏标签固定英文
         if showTemp {
             x = advanceAfter(x)
             let r = NSRect(x: x, y: 0, width: L.temp, height: bounds.height)
             if macmonAvailable {
-                drawText(String(format: "%.0f°C", temp), in: r, font: kValue, color: tempColor(self, temp), align: .right)
+                drawText(String(format: "%.0f°C", temp), in: r, font: kValue, color: tempValueColor(self, temp), align: .right)
             } else {
                 drawText("—", in: r, font: kValue, color: .tertiaryLabelColor, align: .right)
             }
@@ -194,9 +237,11 @@ final class MeterView: NSView {
 
     /// available = false 表示数据源缺失，显示"—"而不是误导性的 0%
     private func metric(name: String, ratio: Double, available: Bool, series: NSColor, x: CGFloat) -> CGFloat {
+        // 数值左对齐紧贴标签：把余量全部推到组间，组内不再留死空白
+        // （原先右对齐时，"5%" 这类短值左侧会空出 17pt）
         drawText(name, in: NSRect(x: x, y: 0, width: L.label, height: bounds.height),
-                 font: kLabelSmall, color: .secondaryLabelColor, align: .right)
-        var cx = x + L.label + 3
+                 font: kLabelBar, color: .secondaryLabelColor, align: .center)
+        var cx = x + L.label + L.pair
 
         if showBars {
             let barRect = NSRect(x: cx, y: bounds.midY - 3.5, width: L.bar, height: 7)
@@ -211,7 +256,7 @@ final class MeterView: NSView {
                     NSBezierPath(roundedRect: f, xRadius: 3.5, yRadius: 3.5).fill()
                 }
             }
-            cx += L.bar + 4
+            cx += L.bar + 3
         }
 
         let valueRect = NSRect(x: cx, y: 0, width: L.value, height: bounds.height)
@@ -219,9 +264,9 @@ final class MeterView: NSView {
             let pct = min(max(ratio, 0), 1)
             let color = colorPct ? levelColor(self, pct) : NSColor.labelColor
             drawText(String(format: "%.0f%%", pct * 100), in: valueRect,
-                     font: kValue, color: color, align: .right)
+                     font: kValue, color: color, align: .left)
         } else {
-            drawText("—", in: valueRect, font: kValue, color: .tertiaryLabelColor, align: .right)
+            drawText("—", in: valueRect, font: kValue, color: .tertiaryLabelColor, align: .left)
         }
         return cx + L.value
     }
@@ -270,16 +315,16 @@ final class PanelView: NSView {
         let row1Y = coreBlock
         let row0Y = coreBlock + L.cellH + L.rowGap
 
-        trend(name: "CPU", data: cpuHist, series: cpuColor(self), current: cpu, unit: "%", ratio: cpu,
+        trend(name: "CPU", data: cpuHist, series: cpuSeriesColor(self), current: cpu, unit: "%", ratio: cpu,
               available: true,
               rect: NSRect(x: c.minX, y: row0Y, width: cellW, height: L.cellH))
-        trend(name: "GPU", data: gpuHist, series: gpuColor(self), current: gpu, unit: "%", ratio: gpu,
+        trend(name: "GPU", data: gpuHist, series: gpuSeriesColor(self), current: gpu, unit: "%", ratio: gpu,
               available: macmonAvailable,
               rect: NSRect(x: c.minX + cellW + L.colGap, y: row0Y, width: cellW, height: L.cellH))
-        trend(name: "内存", data: memHist, series: memColor(self), current: mem, unit: "%", ratio: mem,
+        trend(name: Loc.t("内存", "RAM"), data: memHist, series: memSeriesColor(self), current: mem, unit: "%", ratio: mem,
               available: macmonAvailable,
               rect: NSRect(x: c.minX, y: row1Y, width: cellW, height: L.cellH))
-        trend(name: "温度", data: tempHist, series: tempColor(self, temp), current: temp, unit: "°C",
+        trend(name: Loc.t("温度", "Temperature"), data: tempHist, series: tempSeriesColor(self), current: temp, unit: "°C",
               ratio: (temp - 30) / 70, available: macmonAvailable,
               rect: NSRect(x: c.minX + cellW + L.colGap, y: row1Y, width: cellW, height: L.cellH))
 
@@ -297,7 +342,7 @@ final class PanelView: NSView {
         let valueColor: NSColor
         if available {
             valueText = unit == "%" ? String(format: "%.0f%%", current * 100) : String(format: "%.0f%@", current, unit)
-            valueColor = unit == "%" ? levelColor(self, ratio) : tempColor(self, current)
+            valueColor = unit == "%" ? levelColor(self, ratio) : tempValueColor(self, current)
         } else {
             valueText = "—"                       // 数据源缺失，不显示会误导的 0
             valueColor = .tertiaryLabelColor
@@ -357,7 +402,7 @@ final class PanelView: NSView {
                          xRadius: 1.5, yRadius: 1.5).fill()
             let v = min(max(cores[i], 0), 1)
             let fh = max(2, rect.height * CGFloat(v))
-            (v >= 0.75 ? hotColor(self) : cpuColor(self)).setFill()
+            cpuSeriesColor(self).setFill()
             NSBezierPath(roundedRect: NSRect(x: x, y: rect.minY, width: bw, height: fh),
                          xRadius: 1.5, yRadius: 1.5).fill()
         }
@@ -374,7 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let panel = PanelView()
     private var proc: Process?
     private var buf = Data()
-    private var intervalMs = 1000
+    private var intervalMs = 2000
     private var menu: NSMenu!
     private var panelItem: NSMenuItem!
     private var menuOpen = false
@@ -405,7 +450,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         statusItem.button?.title = ""
         statusItem.button?.image = nil
-        statusItem.button?.toolTip = "CPU / GPU / 内存 占用率 —— 点击展开趋势图"
+        statusItem.button?.toolTip = Loc.t("CPU / GPU / 内存 占用率 —— 点击展开趋势图",
+                                           "CPU / GPU / RAM usage — click to expand trend charts")
         meter.frame = NSRect(x: 0, y: 0, width: meter.preferredWidth, height: 22)
         meter.autoresizingMask = [.width, .height]
         statusItem.button?.addSubview(meter)
@@ -430,37 +476,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         if !macmonAvailable {
-            let hint = NSMenuItem(title: "未找到 macmon —— 点此查看安装说明",
+            let hint = NSMenuItem(title: Loc.t("未找到 macmon —— 点此查看安装说明",
+                                               "macmon not found — click for install instructions"),
                                   action: #selector(openMacmonDocs), keyEquivalent: "")
             hint.target = self
             menu.addItem(hint)
             menu.addItem(NSMenuItem.separator())
         }
 
-        let coreItem = NSMenuItem(title: "显示每个核心（12 核）", action: #selector(toggleCores(_:)), keyEquivalent: "")
+        let coreItem = NSMenuItem(title: Loc.t("显示每个核心（12 核）", "Show every core (12 cores)"), action: #selector(toggleCores(_:)), keyEquivalent: "")
         coreItem.target = self
         coreItem.state = .on                 // 默认打开
         menu.addItem(coreItem)
 
-        let tempItem = NSMenuItem(title: "状态栏显示温度", action: #selector(toggleTemp(_:)), keyEquivalent: "")
+        let tempItem = NSMenuItem(title: Loc.t("状态栏显示温度", "Show temperature in menu bar"), action: #selector(toggleTemp(_:)), keyEquivalent: "")
         tempItem.target = self
         tempItem.state = .off                // 默认关闭
         menu.addItem(tempItem)
 
-        let barsItem = NSMenuItem(title: "状态栏显示进度条", action: #selector(toggleBars(_:)), keyEquivalent: "")
+        let barsItem = NSMenuItem(title: Loc.t("状态栏显示进度条", "Show gauges in menu bar"), action: #selector(toggleBars(_:)), keyEquivalent: "")
         barsItem.target = self
         barsItem.state = .off                // 默认隐藏
         menu.addItem(barsItem)
 
-        let colorItem = NSMenuItem(title: "百分比颜色区分", action: #selector(toggleColor(_:)), keyEquivalent: "")
+        let colorItem = NSMenuItem(title: Loc.t("百分比颜色区分", "Colour-code percentages"), action: #selector(toggleColor(_:)), keyEquivalent: "")
         colorItem.target = self
         colorItem.state = .on                // 默认开启
         menu.addItem(colorItem)
 
-        let intervalItem = NSMenuItem(title: "刷新间隔", action: nil, keyEquivalent: "")
+        let intervalItem = NSMenuItem(title: Loc.t("刷新间隔", "Refresh interval"), action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for ms in [1000, 2000, 5000] {
-            let it = NSMenuItem(title: "\(ms / 1000) 秒", action: #selector(setInterval(_:)), keyEquivalent: "")
+            let it = NSMenuItem(title: Loc.t("\(ms / 1000) 秒", "\(ms / 1000) s"), action: #selector(setInterval(_:)), keyEquivalent: "")
             it.target = self
             it.tag = ms
             it.state = ms == intervalMs ? .on : .off
@@ -469,7 +516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         intervalItem.submenu = sub
         menu.addItem(intervalItem)
 
-        let quitItem = NSMenuItem(title: "退出 MacMonBar", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: Loc.t("退出 MacMonBar", "Quit MacMonBar"), action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 

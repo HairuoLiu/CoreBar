@@ -54,15 +54,16 @@ And if `macmon` is not installed — CPU and per-core still work, the rest degra
 
 ## Features
 
-- **Status bar** — CPU / GPU / memory percentages in three groups, separated by thin vertical dividers and with each label right-aligned against its own number, so it is obvious which value belongs to which metric. Temperature is optional and off by default.
+- **Status bar** — CPU / GPU / RAM percentages in three groups, separated by thin vertical dividers. Labels are **13 pt semibold** (the system menu-bar size, a touch heavier than the values) and are **centred** in their reserved slots; the values are **left-aligned and hug their label**, so there is no dead space inside a group and all the slack goes to the gaps between groups. Temperature is optional and off by default.
 - **Colour-coded percentages.** Each percentage is coloured by its own load — green below 50 %, amber from 50 %, red from 80 % — so a glance tells you what is busy without reading the numbers. On by default; the menu can put it back to plain text.
 - **Optional gauges.** The little level bars are a separate menu toggle, off by default. Plain percentages are the least noisy thing to keep in the corner of your screen all day; the gauges are there for when you want to read a level at a glance rather than a number.
 - **Click to expand** — four full-width area charts in a 2 × 2 grid (CPU, GPU, memory, temperature), each with its current value on the header row, plus a per-core bar row underneath.
 - **Every core is counted.** CPU utilization is sampled by the app itself through Mach `host_processor_info`, so all cores appear — 12 on an M6-class chip. The count is read from the kernel, never hard-coded.
 - **CPU works without macmon.** The sampler runs on its own timer, so a missing macmon costs you GPU / memory / temperature and nothing else. Those three render as `—` rather than `0 %`, and the menu gains a one-click link to the install instructions.
 - **No watts in the status bar.** The status bar is for utilization; wattage was deliberately left out because it does not change the decisions you make while coding.
-- **Refresh interval** — 1 s / 2 s / 5 s, switchable from the menu.
-- **Light and dark** aware, with semantic colour thresholds (green below 50 %, amber from 50 %, red from 80 %).
+- **Refresh interval** — 1 s / 2 s / 5 s, switchable from the menu. 2 s is the default.
+- **Light and dark** aware, with semantic value thresholds (percentages green below 50 % / amber from 50 % / red from 80 %; temperature green below 60 °C / amber from 60 °C / red from 80 °C). Chart lines and labels use a separate set of identity hues — blue CPU, rose GPU, cyan memory, purple temperature — so the two colour systems never overlap.
+- **Bilingual.** The menu and the expanded panel follow the system language — Chinese on a `zh-*` system, English everywhere else — resolved once at launch. The status bar's CPU / GPU / RAM labels are deliberately pinned to English regardless, so the bar reads identically on every machine. Changing the system language takes effect after a restart.
 - `LSUIElement` — no Dock icon, no window, nothing to switch to.
 - **No dependencies.** AppKit + Foundation + Mach only. No SwiftPM, no Carthage, no SPM packages.
 
@@ -181,11 +182,13 @@ Machine: Apple M6, 32 GB, macOS 13-era SDK. Physical footprint measured via `lib
 | | Terminal route | MacMonBar, menu closed | MacMonBar, menu open |
 |---|---|---|---|
 | Resident memory | ≈ 75 MiB | 18.5 MiB | ≈ 24 MiB |
-| CPU time | ≈ 0.62 % of a core | ≈ 0.75 % of a core | ≈ 1.05 % of a core |
+| CPU time | ≈ 0.62 % of a core | ≈ 0.43 % of a core | ≈ 0.54 % of a core |
 
-Broken down: the terminal route is Terminal.app (0.225 % / 72.2 MiB) plus `macmon` in TUI mode (0.398 % / 2.7 MiB); the closed state is the app itself (0.30 % / 12.9 MiB) plus the `macmon pipe` child (0.465 % / 5.6 MiB); the open state is 0.585 % for the app plus ≈0.47 % for the child.
+> MacMonBar's two columns are at the new **2 s** default. At 1 s they read 0.74 % / 1.05 % — see the interval table below.
 
-Opening the menu for the first time costs about **5 MiB** (bare-binary measurement 8.5 → 13.3 MiB): the menu window and the panel's backing store only exist once you click the icon. Opening it repeatedly costs nothing further (nine consecutive opens measured flat). Long-running instances grow slowly — a 1.5-hour-old instance sat at 21.0 MiB, presumably allocation fragmentation from the once-a-second JSON parsing.
+Broken down: the terminal route is Terminal.app (0.225 % / 72.2 MiB) plus `macmon` in TUI mode (0.398 % / 2.7 MiB); the closed state is the app itself (0.17 % / 12.9 MiB) plus the `macmon pipe` child (0.26 % / 5.6 MiB); the open state is 0.29 % for the app plus ≈0.26 % for the child.
+
+Opening the menu for the first time costs about **5 MiB** (bare-binary measurement 8.5 → 13.3 MiB): the menu window and the panel's backing store only exist once you click the icon. Opening it repeatedly costs nothing further (nine consecutive opens measured flat). Long-running instances grow slowly — a 1.5-hour-old instance sat at 21.0 MiB, presumably allocation fragmentation from the once-every-2-seconds JSON parsing.
 
 ### Power
 
@@ -199,20 +202,20 @@ Each state was measured over 8-second-plus windows, multiple rounds (`tools/meas
 
 | State | CPU time | Incremental power | Energy per minute |
 |---|---|---|---|
-| Menu bar resident, menu **not** clicked | 0.45 core-s/min | ≈ 6.6 mW | ≈ 0.40 J |
-| Menu open, 4 charts + 12 core bars redrawing at 1 Hz | 0.63 core-s/min | ≈ 9.2 mW | ≈ 0.55 J |
+| Menu bar resident, menu **not** clicked (2 s default) | 0.26 core-s/min | ≈ 3.8 mW | ≈ 0.23 J |
+| Menu open, 4 charts + 12 core bars redrawing every 2 s | 0.33 core-s/min | ≈ 4.8 mW | ≈ 0.29 J |
 
-Power is linearly extrapolated from the calibration, i.e. an **upper bound**: a 0.75 % duty cycle never actually ramps core frequency, so the true increment is lower.
+Power is linearly extrapolated from the calibration, i.e. an **upper bound**: a 0.43 % duty cycle never actually ramps core frequency, so the true increment is lower.
 
-**Is there a difference? Yes in relative terms, no in absolute ones.** Opening the menu does about **40 % more work**, worth ≈2.6 mW or ≈0.15 J per minute — still ≈**270× below** the ±0.71 W noise floor of whole-machine measurement, and about **0.03 % of the machine's idle draw**. For scale, a minute of ordinary web browsing pushes whole-machine draw up by a few watts, on the order of 100 – 200 J per minute; this app costs 0.4 – 0.55 J.
+**Is there a difference? Yes in relative terms, no in absolute ones.** Opening the menu does about **27 % more work**, worth ≈1.0 mW or ≈0.06 J per minute — still ≈**700× below** the ±0.71 W noise floor of whole-machine measurement, and about **0.04 % of the machine's idle draw**. For scale, a minute of ordinary web browsing pushes whole-machine draw up by a few watts, on the order of 100 – 200 J per minute; this app costs 0.23 – 0.29 J.
 
-Run continuously for a year the two states come to ≈**58 Wh** and ≈**80 Wh** — about 0.7 and 1.0 full charges on an 80 Wh battery, or 0.16 / 0.22 Wh per day, i.e. roughly **0.2 % / 0.3 % of a charge per day**. The Mac mini is a desktop; the practical meaning of these numbers is the electricity bill: a few cents a year.
+Run continuously for a year the two states come to ≈**33 Wh** and ≈**42 Wh** — about 0.4 and 0.5 full charges on an 80 Wh battery, or 0.09 / 0.12 Wh per day, i.e. roughly **0.1 % / 0.15 % of a charge per day**. The Mac mini is a desktop; the practical meaning of these numbers is the electricity bill: a few cents a year.
 
-Most of the app's own cost is the `macmon pipe` child it spawns (0.465 % = 0.28 core-s/min, 62 % of the whole stack); second is the status-bar `MeterView` redrawing every second (≈0.20 %) — which costs more than all four trend charts combined. See below.
+Most of the app's own cost is the `macmon pipe` child it spawns (0.262 % = 0.16 core-s/min, 61 % of the whole stack); second is the status-bar `MeterView` redrawing every 2 s (≈0.10 % at this interval, ≈0.20 % at the 1 s baseline below) — which costs more than all four trend charts combined. See below.
 
 ### Cost decomposition (measured, 2026-10-13)
 
-The app broken into removable blocks, each measured (menu closed, 1 s refresh baseline):
+The app broken into removable blocks, each measured (menu closed, 1 s refresh baseline — i.e. the *old* default, not the 2 s one; at 2 s every row roughly halves):
 
 | Component | CPU | Notes |
 |---|---|---|
@@ -221,13 +224,15 @@ The app broken into removable blocks, each measured (menu closed, 1 s refresh ba
 | JSON ingestion (pipe + parse + `apply` + sampling) | ≈ 0.04 % | |
 | Timers + AppKit floor | ≈ 0.04 % | an empty AppKit agent app costs 0.004 % by itself |
 
-Refresh interval (the menu already offers 1 / 2 / 5 s; measured):
+Refresh interval (1 / 2 / 5 s in the menu, **2 s is the default**; re-measured on the current build, two 30 s runs each):
 
 | Interval | App | Child | Total | vs. default |
 |---|---|---|---|---|
-| 1 s (default) | 0.270 % | 0.465 % | 0.735 % | — |
-| 2 s | 0.172 % | 0.235 % | 0.407 % | −45 % |
-| 5 s | 0.123 % | 0.102 % | 0.225 % | −69 % |
+| 1 s | 0.295 % | 0.445 % | 0.740 % | +72 % |
+| 2 s (default) | 0.168 % | 0.262 % | 0.429 % | — |
+| 5 s | 0.098 % | 0.110 % | 0.207 % | −52 % |
+
+Moving the default from 1 s to 2 s — what this release does — takes the whole app from 0.740 % to 0.429 % of a core: **−42 %**.
 
 The open-menu increment (0.315 %) breaks down further: trend-chart data paths 0.130 %, per-core bars 0.022 %, menu event tracking and panel compositing 0.163 %.
 
@@ -239,7 +244,7 @@ On GPU: MacMonBar itself measures **0.000 %** — it is a pure AppKit 2D app, ra
 
 **Charts, not text.** Percentages alone cannot show a trend. Four small multiples — one metric each, stacked — are used instead of two overlaid sparklines, because overlaid lines are unreadable when they cross. Each chart carries its current value inline on the header row, a 50 % dashed reference line, an 18 % area fill, and a dot on the latest sample.
 
-**Color is semantic.** Blue for CPU, orange for GPU, green for memory, and a red/amber/green threshold ramp that is consistent across every element. In dark mode the hues are lightened so they keep their contrast.
+**Two disjoint colour systems.** Colour is split into two layers that never mix. **Identity hues** belong to the charts only — blue CPU, rose GPU, cyan memory, purple temperature — four hues that deliberately avoid green, amber and red. **Value hues** belong to the right-hand numbers only — green (normal), amber (elevated), red (alert) — driven by each metric's own thresholds (percentages <50 % / ≥50 % / ≥80 %, temperature <60 °C / ≥60 °C / ≥80 °C). A chart can therefore never collide with a number wearing the same colour: the right column tells you what is busy, the line colour tells you which metric it is. In dark mode the hues are lightened so they keep their contrast.
 
 **Fixed width.** The panel is 300 pt with 14 pt of padding on each side. A width chooser was removed — a monitor should have one good default, not a preference pane.
 
@@ -278,6 +283,16 @@ Compile any of them with `swiftc -O tools/<name>.swift -o /tmp/<name>`.
 - Per-core accuracy cross-checked against [mactop](https://github.com/context-labs/mactop).
 
 ## Changelog
+
+### 0.2.8 — 2026-10-14
+
+- **Default refresh interval is now 2 s** (the menu still offers 1 / 2 / 5 s). Re-measured on the current build (two 30 s runs per interval): the whole app drops from 0.740 % to 0.429 % of a core — **−42 %**. The trend charts' history window grows to 4 minutes as a consequence.
+- **Bilingual UI.** The menu and the expanded panel follow the system language (Chinese on `zh-*`, English otherwise), resolved once at launch; every user-facing string now sits behind a single `Loc.t(zh, en)` helper. The status bar labels are deliberately pinned to English — CPU / GPU / RAM — so the bar reads identically on every machine.
+- **Colour split into two disjoint systems.** Identity hues belong to the charts only (trend lines, top-left labels, status-bar gauges): blue CPU, rose GPU, cyan memory, purple temperature — four hues that deliberately avoid green, amber and red. Value hues belong to the right-hand numbers only: green (normal), amber (elevated), red (alert), with percentages at <50 % / ≥50 % / ≥80 % and temperature at <60 °C / ≥60 °C / ≥80 °C. A chart can never collide with a number wearing the same colour. The per-core bars are now plain CPU blue and no longer turn red.
+- **Status-bar labels at 13 pt semibold, centred.** 13 pt is exactly the system menu-bar size (`NSFont.menuFont` measures 13.0, as does the default status-bar button font). Each label is centred in its reserved slot so the padding is even, and the values are left-aligned to hug their label — removing the 17 pt of dead space that right-aligned short values ("5%") used to leave on their left. Panel chart titles stay at 11 pt medium; the two no longer share a constant.
+- **The net width is shorter, not longer.** Enlarging the labels to 13 pt pushed the bar to 261 pt; this release re-sizes every slot from measurements — the value slot is sized for the common maximum ("99%" = 29.1 pt) rather than the theoretical one ("100%" = 37.4 pt) — bringing it back to **230 pt**, 7 pt shorter than the 237 pt it was before the labels grew.
+- **Fixed `drawText` clipping on overflow.** The drawing rect used to be exactly the slot width; when the string was wider, `NSString.draw` wrapped the last character onto a second line, which the single-line height then clipped — the verification render showed "100" instead of "100%". The rect now widens to the text's real width and re-anchors by alignment.
+- **Docs:** all screenshots re-rendered from real samples; the offscreen pipeline no longer mis-resolves dynamic colours (`labelColor` / `secondaryLabelColor`) against the view's appearance in dark mode.
 
 ### 0.2.2 — 2026-10-13
 
