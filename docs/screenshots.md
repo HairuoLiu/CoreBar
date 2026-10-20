@@ -38,10 +38,10 @@ Four trend charts (2 × 2) plus a per-core bar row. / 四张趋势图（2 × 2�
 
 ![panel, dark](panel-dark.png)
 
-## Without macmon / 缺少 macmon
+## Without sensors / 传感器不可用
 
-CPU and per-core still work; the other three degrade to `—` instead of a misleading `0 %`. / CPU 与逐核仍然工作，其余三项降级为 `—`，而不是误导性的 `0%`。
+CPU, per-core and memory still work; GPU and temperature degrade to `—` instead of a misleading `0 %`. This is the state you would see if a future macOS locked down the private APIs. / CPU、逐核与内存仍然工作；GPU 与温度降级为 `—`，而不是误导性的 `0%`。这是未来的 macOS 锁死私有 API 时你会看到的状态。
 
-![status bar without macmon](statusbar-no-macmon-light.png)
+![status bar without sensors](statusbar-no-macmon-light.png)
 
-![panel without macmon](panel-no-macmon-light.png)
+![panel without sensors](panel-no-macmon-light.png)

@@ -4,6 +4,38 @@ All notable changes to MacMonBar. Versions are also tagged as GitHub releases.
 
 <!-- 每条记录先英文后中文；中文标题下为对应中文说明。 -->
 
+## 0.3.1 — 2026-10-20
+
+**EN**
+
+- **Removed the cost column from the menu.** Every toggle row used to end with its measured price ("+48 pt · RAM≈0", "RAM≈0 · CPU ±0.1%"). Since the display toggles all cost 0 bytes, the column was a stack of zeros taking up half a row — the rows now show just the checkmark and the title, and the menu reads much lighter. The numbers stay in [docs/features.md](docs/features.md) and [docs/performance.md](docs/performance.md) for anyone who wants them; the tooltips are unchanged.
+- **Code:** `MenuRowView` no longer carries a `note`, and the five `kNote*` string constants are gone (`rowItem` lost its `note:` parameter). Same self-drawn row, minus the right-aligned label.
+
+**中文**
+
+- **去掉菜单里的代价列。** 每个开关行末尾原本写着实测代价（「状态栏 +48pt · 内存≈0」「内存≈0 · CPU ±0.1%」）。既然显示类开关全是 0 字节，这列就是一堆零，占掉半行宽度——现在每行只剩勾选和标题，菜单看起来清爽很多。数字仍留在 [docs/features.md](docs/features.md) 与 [docs/performance.md](docs/performance.md) 里，想看的人随时能查；tooltip 未动。
+- **代码：** `MenuRowView` 不再持有 `note`，五个 `kNote*` 字符串常量删除（`rowItem` 去掉 `note:` 参数）。仍是同一套自绘行，只是没有了右对齐的那段字。
+
+## 0.3.0 — 2026-10-19
+
+**EN**
+
+- **Removed the `macmon` subprocess entirely.** GPU utilization and temperature are now read **in-process** by a new native C module, `src/sensors.c` (519 lines), bridged into Swift with five `@_silgen_name` calls. GPU load comes from `libIOReport` ("GPU Stats" → `GPUPH` residency → frequency-weighted scaled ratio); temperature from `AppleSMC` `flt`-typed `Tp*/Te*/Ts*`/`Tg*` keys with an `IOHID` thermal fallback — the same sources, and the same algorithm, macmon uses.
+- **One process instead of two.** Measured head-to-head against v0.2.9 (same machine, same session, 2 s default, three 15-second runs each): footprint **21.4 MiB → 12.9 MiB (−40 %)**, total CPU **0.392 % → 0.263 % of a core (−33 %)**, one process instead of two. **Zero external dependencies** — no `brew install`, no `PATH` lookup, no install step, no JSON pipe.
+- **Readout parity verified sample-by-sample.** Driving macmon 0.9.0 `pipe` and the C sensors simultaneously across idle / light / CPU-pulse / GPU-saturated scenarios: **temperatures are bit-identical** (39 CPU + 18 GPU SMC keys, same filter, same average — Δ = 0.0000 °C in every steady-state scenario, r = 1.0000); GPU utilization matches to within delta-window jitter (mean |Δ| ≈ 0.001–0.002 at ~0.15 utilization, both exactly 1.0000 under saturation). This verification caught and fixed a byte-order bug in the SMC key enumeration (big-endian FourCC keys were matched unswapped, silently disabling the SMC path) plus two smaller parity gaps (the `usage` window now covers exactly `freqs.len()` states; key reads pass the cached `key_info`). Full table: [docs/macmon.md](docs/macmon.md#readout-parity-with-macmon).
+- **Removed:** the "Minimal mode" menu item (there is no child to drop anymore), the "Install macmon…" hint, and the macmon-install section of the READMEs. The macOS 13-era "Why the dependency stays" essay is now [docs/macmon.md](docs/macmon.md) — "Why a subprocess was ever used, and how the native C module replaced it".
+- **Toolchain is now Python-free.** `tools/measure.py`, `measure_state.py` and `power_ab.py` merged into one Swift tool, `tools/measure.swift`; `tools/render_docs.py` rewritten as `tools/render_docs.swift` (its harness now samples through the native C bridge instead of `macmon pipe`). The obsolete `tools/memtest.swift` (calibrated against macmon) was removed. All `docs/` screenshots regenerated with the new pipeline.
+- **Docs:** performance page re-measured for the single-process build (12.9 MiB / 0.26 % of a core at the 2 s default, memory flat across 1/2/5 s intervals, power ≈ 2.3 mW); data-flow, features, tools and troubleshooting pages updated for the new architecture.
+
+**中文**
+
+- **彻底移除 `macmon` 子进程。** GPU 占用与温度改由新的原生 C 模块 `src/sensors.c`（519 行）**在进程内**读取，通过五个 `@_silgen_name` 调用桥接进 Swift。GPU 走 `libIOReport`（"GPU Stats" → `GPUPH` 驻留度 → 按频率加权的 scaled ratio）；温度优先 `AppleSMC` 的 `flt` 类型 `Tp*/Te*/Ts*`/`Tg*` 键，受限时回退 `IOHID` 热传感器——与 macmon 同源、同算法。
+- **从两个进程变成一个。** 与 v0.2.9 同场并列实测（同机、同时段、2 秒默认、各三轮 15 秒）：footprint **21.4 MiB → 12.9 MiB（−40%）**，总 CPU **0.392% → 0.263% 单核（−33%）**，进程数 2 → 1。**零外部依赖**——不用 `brew install`、没有 `PATH` 查找、没有安装步骤、没有 JSON 管道。
+- **读数一致性逐样本验证。** 同时驱动 macmon 0.9.0 `pipe` 与 C 传感器，覆盖空闲 / 轻载 / CPU pulse / GPU 满载四种场景：**温度逐位一致**（本机 39 个 CPU + 18 个 GPU SMC 键，同样的过滤与平均——全部稳态场景 Δ = 0.0000°C，r = 1.0000）；GPU 占用率差异在 delta 窗口抖动范围内（~0.15 占用下平均绝对偏差约 0.001–0.002，满载时两边都精确等于 1.0000）。这次验证还揪出并修掉了一个 SMC 键枚举的字节序 bug（大端 FourCC 键未做字节交换就做前缀匹配，导致 SMC 路径被静默跳过）和两处小的对齐差距（`usage` 窗口只取偏移后恰好 `freqs.len()` 个状态；读键时带上缓存的 `key_info`）。完整对照表见 [docs/macmon.md](docs/macmon.md#与-macmon-的读数一致性)。
+- **移除：** 菜单里的"极简模式"（已经没有子进程可关了）、"安装 macmon…"提示，以及中英 README 的 macmon 安装章节。原来那篇《为什么保留这个依赖》现在是 [docs/macmon.md](docs/macmon.md)——《当初为什么用子进程，以及原生 C 模块是怎么取代它的》。
+- **工具链不再依赖 Python。** `tools/measure.py`、`measure_state.py`、`power_ab.py` 合并为一个 Swift 工具 `tools/measure.swift`；`tools/render_docs.py` 重写为 `tools/render_docs.swift`（采集端改走原生 C 桥接，不再读 `macmon pipe`）。过时的 `tools/memtest.swift`（当年对标 macmon 校准内存口径）已删除。`docs/` 下所有截图用新流程重新生成。
+- **文档：** 性能页按单进程构建重测（2 秒默认 12.9 MiB / 0.26% 单核；1/2/5 秒三档内存持平；功耗约 2.3 mW）；数据流、功能、工具、故障排查各页同步更新到新架构。
+
 ## 0.2.9 — 2026-10-14
 
 **EN**

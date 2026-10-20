@@ -7,26 +7,27 @@
 ### Data flow
 
 ```
-  [macmon installed]  macmon pipe -i 2000   (child Process)
-                      stdout JSON  ->  gpu_scaled_ratio
-                                      ->  memory.ram_usage / ram_total
-                                      ->  temp.cpu_temp_avg
-                                          |
-                                          +--> GPU / memory / temperature
-                                          |     (macmon missing -> these show "—")
-                                          |     (macmon fails to launch -> same)
-
-  [always]            Timer @ intervalMs          Mach host_processor_info
-                      independent heartbeat  -->  (PROCESSOR_CPU_LOAD_INFO)
-                      does NOT wait on macmon          |
-                                                       v
-                                          per-core user/system/nice/idle ticks
-                                                       |
-                                                       v
-                                          delta-based utilization
-                                          for ALL N cores ---> MeterView (status bar)
-                                                            -> PanelView (expanded)
+  [always, in-process]   sampler Timer @ intervalMs  (RunLoop .common mode)
+        |
+        |-- CPU / per-core : Mach host_processor_info (PROCESSOR_CPU_LOAD_INFO)
+        |                       per-core user/system/nice/idle ticks -> delta utilization
+        |
+        |-- Memory %        : Mach host_statistics64 (vm_statistics64)
+        |
+        |-- GPU %           : C bridge -> libIOReport  ("GPU Stats" residency -> scaled ratio)
+        |                       @_silgen_name("macmonbar_gpu_scaled_ratio")
+        |
+        `-- Temperature     : C bridge -> AppleSMC (flt keys) or IOHID thermal fallback
+                                @_silgen_name("macmonbar_cpu_temp_c" / "macmonbar_gpu_temp_c")
+                                        |
+                                        v
+                          MeterView (status bar)  ->  PanelView (expanded panel)
 ```
+
+There is **no child process and no JSON pipe** — the Swift side calls five C functions
+declared with `@_silgen_name` and reads the values directly. If the C sensor module fails
+to initialize (e.g. a future macOS locks down the private APIs), `sensorsAvailable` is
+`false` and GPU / temperature simply render as "—"; CPU / memory keep working.
 
 The status bar is a custom `NSView` (`MeterView`) attached to the `NSStatusItem`'s button via `statusItem.button?.addSubview`. `statusItem.length = meter.preferredWidth` keeps its width exact — the width is computed from measured text metrics, not guessed.
 
@@ -45,27 +46,25 @@ For a utilization meter the first column is the one you want. `tools/cputest.swi
 
 ### One non-obvious bug worth knowing about
 
-`NSMenu` opens a nested event loop in `NSEventTrackingRunLoopMode`. Blocks submitted with `DispatchQueue.main.async` are **not** dispatched in that mode, so the obvious implementation — pipe handler → `DispatchQueue.main.async` → redraw — leaves the panel frozen the moment you click the icon.
+`NSMenu` opens a nested event loop in `NSEventTrackingRunLoopMode`. Blocks submitted with `DispatchQueue.main.async` are **not** dispatched in that mode, so the obvious implementation — background sampler → `DispatchQueue.main.async` → redraw — leaves the panel frozen the moment you click the icon.
 
-Measured directly: over 25 seconds with the menu open, the background queue received 24 samples while only 3 `ingest` calls and 1 redraw ever ran.
-
-The fix is to hand the raw bytes to the main thread through a `Timer` added to `RunLoop.main` in `.common` mode, which *is* serviced during event tracking:
+The fix is to drive the whole UI from a single `Timer` added to `RunLoop.main` in `.common` mode, which *is* serviced during event tracking:
 
 ```swift
 RunLoop.main.add(t, forMode: .common)
 ```
 
-After the fix the same 25-second window yields `bg=24 main=24 panelDraw=23` — the panel genuinely rasterizes once per second while the menu is open. This is also why the measured power numbers are believable: the drawing work is real, not skipped.
+That one timer calls `tick()`, which samples CPU / memory (Mach) **and** GPU% / temperature (the C bridge) and repaints. The panel genuinely rasterizes every interval while the menu is open, which is also why the measured power numbers are believable: the drawing work is real, not skipped.
 
 ### Where the numbers come from
 
-| Metric | Source | macmon's code? |
+| Metric | Source | External code? |
 |---|---|---|
 | CPU utilization | `CPUCoreSampler` → Mach `host_processor_info` (Apple API) | No |
 | Per-core utilization | same sampler | No |
-| GPU utilization | `gpu_scaled_ratio` in macmon's JSON | No — but computed by the macmon binary |
-| Memory % | `ram_usage` / `ram_total` in macmon's JSON | No |
-| Temperature | `cpu_temp_avg` in macmon's JSON | No |
+| GPU utilization | `macmonbar_gpu_scaled_ratio` → `libIOReport` (private, `dlopen`) | No — implemented in `src/sensors.c` |
+| Memory % | `MemorySampler` → Mach `host_statistics64` | No |
+| Temperature | `macmonbar_cpu_temp_c` / `macmonbar_gpu_temp_c` → AppleSMC / IOHID | No — implemented in `src/sensors.c` |
 
 ---
 
@@ -74,26 +73,26 @@ After the fix the same 25-second window yields `bg=24 main=24 panelDraw=23` — 
 ### 数据流
 
 ```
-  [装了 macmon]        macmon pipe -i 2000   （子进程）
-                      stdout JSON  ->  gpu_scaled_ratio
-                                      ->  memory.ram_usage / ram_total
-                                      ->  temp.cpu_temp_avg
-                                          |
-                                          +--> GPU / 内存 / 温度
-                                          |     （macmon 缺失 → 显示 "—"）
-                                          |     （macmon 起不来 → 同样）
-
-  [始终运行]           Timer @ intervalMs         Mach host_processor_info
-                      独立心跳              -->  (PROCESSOR_CPU_LOAD_INFO)
-                      不等待 macmon                 |
-                                                    v
-                                      逐核 user/system/nice/idle tick
-                                                    |
-                                                    v
-                                       基于差值的占用率
-                                       覆盖全部 N 核 ---> MeterView（状态栏）
-                                                     -> PanelView（展开面板）
+  [始终，进程内]        采样 Timer @ intervalMs  （RunLoop .common 模式）
+        |
+        |-- CPU / 逐核 : Mach host_processor_info（PROCESSOR_CPU_LOAD_INFO）
+        |                  逐核 user/system/nice/idle tick → 差值占用率
+        |
+        |-- 内存 %       : Mach host_statistics64（vm_statistics64）
+        |
+        |-- GPU %        : C 桥接 → libIOReport（"GPU Stats" 驻留度 → scaled ratio）
+        |                   @_silgen_name("macmonbar_gpu_scaled_ratio")
+        |
+        `-- 温度         : C 桥接 → AppleSMC（flt 键）或 IOHID 温度回退
+                            @_silgen_name("macmonbar_cpu_temp_c" / "macmonbar_gpu_temp_c")
+                                        |
+                                        v
+                          MeterView（状态栏）  ->  PanelView（展开面板）
 ```
+
+**没有子进程，也没有 JSON 管道**——Swift 这边直接调五个用 `@_silgen_name` 声明的 C 函数读值。
+若 C 传感器模块初始化失败（例如未来 macOS 锁死了私有 API），`sensorsAvailable` 为 `false`，
+GPU / 温度就画成 "—"；CPU / 内存照常工作。
 
 状态栏是一个自定义 `NSView`（`MeterView`），通过 `statusItem.button?.addSubview` 贴到 `NSStatusItem` 的按钮上；`statusItem.length = meter.preferredWidth` 让宽度精确——宽度由实测字体度量算出，不是猜的。
 
@@ -112,24 +111,22 @@ macmon 的 `cpu_usage_pct` 是**频率加权的驻留度**——核心在某个 
 
 ### 一个值得知道的坑
 
-`NSMenu` 会在 `NSEventTrackingRunLoopMode` 里开一个嵌套事件循环。用 `DispatchQueue.main.async` 投递的 block 在这个模式下**不会被派发**，所以最直观的写法——管道回调 → `DispatchQueue.main.async` → 重绘——会让你一点开图标面板就冻住。
+`NSMenu` 会在 `NSEventTrackingRunLoopMode` 里开一个嵌套事件循环。用 `DispatchQueue.main.async` 投递的 block 在这个模式下**不会被派发**，所以最直观的写法——后台采样 → `DispatchQueue.main.async` → 重绘——会让你一点开图标面板就冻住。
 
-实测：菜单展开的 25 秒里，后台队列收到 24 个样本，但只发生了 3 次 `ingest` 和 1 次重绘。
-
-修法是把原始字节通过一个挂在 `RunLoop.main` 且模式为 `.common` 的 `Timer` 交回主线程——该模式在事件跟踪期间仍会被服务：
+修法是让整个 UI 由**一个**挂在 `RunLoop.main` 且模式为 `.common` 的 `Timer` 驱动——该模式在事件跟踪期间仍会被服务：
 
 ```swift
 RunLoop.main.add(t, forMode: .common)
 ```
 
-修复后同样 25 秒窗口得到 `bg=24 main=24 panelDraw=23`——菜单展开时面板确实每秒真实重绘一次。这也是功耗数字可信的原因：绘制工作是真的发生了，没有被跳过。
+这一个定时器调用 `tick()`，它采样 CPU / 内存（Mach）**以及** GPU% / 温度（C 桥接）并重绘。菜单展开时面板每个间隔都真实重绘，这也是功耗数字可信的原因：绘制工作是真的发生了，没有被跳过。
 
 ### 数据来源
 
-| 指标 | 来源 | 用了 macmon 的代码吗 |
+| 指标 | 来源 | 用了外部代码吗 |
 |---|---|---|
 | CPU 占用率 | `CPUCoreSampler` → Mach `host_processor_info`（Apple 公开 API） | 否 |
 | 逐核占用率 | 同上 | 否 |
-| GPU 占用率 | macmon JSON 里的 `gpu_scaled_ratio` | 否，但由 macmon 二进制算出 |
-| 内存百分比 | macmon JSON 里的 `ram_usage` / `ram_total` | 否 |
-| 温度 | macmon JSON 里的 `cpu_temp_avg` | 否 |
+| GPU 占用率 | `macmonbar_gpu_scaled_ratio` → `libIOReport`（私有，dlopen） | 否——实现在 `src/sensors.c` |
+| 内存百分比 | `MemorySampler` → Mach `host_statistics64` | 否 |
+| 温度 | `macmonbar_cpu_temp_c` / `macmonbar_gpu_temp_c` → AppleSMC / IOHID | 否——实现在 `src/sensors.c` |

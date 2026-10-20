@@ -1,6 +1,6 @@
 # The 75-Megabyte Window
 
-### What a 733-line menu bar app taught me about measuring twice
+### What a menu bar app taught me about measuring twice
 
 *A TED-style talk · ~18 minutes · [中文版 →](./TALK.zh-CN.md)*
 
@@ -168,9 +168,9 @@ Four things, and none of them are about Swift.
 
 **Four: minimalism is a measurement problem, not a taste problem.** I didn't make this app small by having good taste. I made it small by measuring what each part cost and deleting the parts whose cost bought me nothing — the wattage, the width chooser, the end-point dot on the chart, the 50 % reference line on a chart where 50 % means nothing. **You cannot delete with confidence until you have measured what you're deleting.**
 
-*[Slide: 18.5 MiB · 0.43 % · 3.8 mW · 733 lines · 0 dependencies]*
+*[Slide: ≈13 MiB · 0.26 % · 2.3 mW · 1,361 lines · 0 dependencies]*
 
-The app is 733 lines of Swift. No dependencies. 18.5 megabytes, 0.43 % of a core, about 3.8 milliwatts — which, if you leave it running for a year, is 33 watt-hours. Roughly 0.1 % of one battery charge per day.
+The app is 1,361 lines — 842 of Swift, 519 of C. No dependencies, no subprocess, no Python. About 13 megabytes, 0.26 % of a core, about 2.3 milliwatts — which, if you leave it running for a year, is 20 watt-hours. Roughly 0.07 % of one battery charge per day.
 
 I replaced a 75-megabyte window with that. But the thing I actually got out of it wasn't the memory. It was discovering, four separate times, that I had been confidently wrong — and that in three of those cases, **measurement, not intelligence, is what caught me.**
 
@@ -182,17 +182,34 @@ Thank you.
 
 ---
 
+## Postscript — 0.3.0, or "what the subprocess actually cost"
+
+This talk is given with the app exactly as it was built: 20.8 MiB, two processes, a Rust child named `macmon` on the other end of a JSON pipe. The whole premise of the talk — *replace the 75-megabyte window with a 20-megabyte menu bar* — rests on that child staying.
+
+Months later I measured the child itself, and it was 9.0 MiB and 0.23 % of a core. Nearly half my "win" was one binary I had chosen not to look at. So I looked at it.
+
+GPU load was `libIOReport` — `dlopen`, a subscription, two samples, a delta, one residency channel, a frequency-weighted ratio. Temperature was `AppleSMC` with an `IOHID` thermal fallback. Both private, both fragile, both the reason I had outsourced the problem in the first place. And both, it turned out, about 500 lines of C.
+
+The result: **one process, ≈12.9 MiB, 0.26 % of a core, zero dependencies** — measured head-to-head against the old build on the same machine in the same session: 21.4 → 12.9 MiB (−40 %) and 0.392 → 0.263 % of a core (−33 %), one process instead of two. And the numbers themselves? Because the algorithms were copied from macmon rather than reinvented, they are **bit-identical** — I drove both samplers simultaneously and compared every sample: temperatures matched to 0.0000 °C across idle, pulsing and saturated load. (That check earned its keep: the first attempt read GPU temperature 2.2 °C low, because the SMC key enumeration matched big-endian FourCC names unswapped and silently fell through to a different sensor set. Fixed, re-verified, now bit-exact.)
+
+The lesson I would add to the four above: **the thing you are afraid to measure is usually the thing you should measure first.** I spent a year optimising display toggles that cost 0 bytes while a dependency I was "just shelling out to" quietly held half the memory budget. Measure the parts you did not write, too — and when you replace them, verify the replacement reads the same numbers, not just smaller ones.
+
+---
+
 ## Appendix — the numbers, with their definitions
+
+> Numbers as of 0.3.0 (single process), re-measured 2026-10-20 head-to-head against the v0.2.9 two-process build. The 0.2.x figures — 21.4 MiB including a 9.0 MiB `macmon pipe` child, 0.39 % of a core — are in the changelog.
 
 | Claim | Value | How it was measured |
 |---|---|---|
-| Memory | 18.5 MiB | `ri_phys_footprint` via `libproc` — physical footprint, not RSS |
-| CPU, menu closed | 0.43 % of a core | Multiple ≥8 s windows, Mach-tick-corrected |
-| CPU, menu open | 0.54 % of a core | same |
+| Memory | ≈12.9 MiB | `ri_phys_footprint` via `libproc` — physical footprint, not RSS; single process; three 15 s runs |
+| CPU, menu closed | 0.26 % of a core | Multiple 15 s windows, Mach-tick-corrected; old two-process build measured the same way at 0.39 % |
+| CPU, menu open | 0.28 % of a core | same (2026-10-19 session) |
 | Terminal route | ≈75 MiB / 0.62 % | Terminal.app 72.2 MiB + macmon TUI 2.7 MiB |
-| Power | ≈3.8 mW | Derived from CPU time × on-machine calibration (8.60 W idle, 19.13 W at 12-thread full load) |
+| Power | ≈2.3 mW | Derived from CPU time × on-machine calibration (8.60 W idle, 19.13 W at 12-thread full load) |
 | GPU | 0.000 % | Pure AppKit 2D, rasterized on the CPU |
-| Refresh default | 2 s | 1 s → 0.740 %; 2 s → 0.429 %; 5 s → 0.207 % |
+| Refresh default | 2 s | 1 s → 0.36 %; 2 s → 0.26 %; 5 s → 0.07 % (memory flat at ≈13 MiB across all three) |
+| Readout parity | bit-identical | macmon 0.9.0 `pipe` vs native C, sample-by-sample: temps Δ = 0.0000 °C, GPU ratio within window jitter — [docs/macmon.md](docs/macmon.md#readout-parity-with-macmon) |
 | Bar width | 230 pt | Sum of slots sized from measured font metrics |
 
 Full methodology: [docs/performance.md](docs/performance.md). The `NSMenu` event-loop bug: [docs/how-it-works.md](docs/how-it-works.md). Colour systems and width: [docs/design.md](docs/design.md).

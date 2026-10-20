@@ -2,12 +2,24 @@ import AppKit
 import Foundation
 import Darwin
 
+// MARK: - 原生 C 传感器桥接（见 src/sensors.c / src/sensors.h）
+//
+// 替代 macmon 子进程：GPU 占用走 libIOReport，温度走 IOHID/AppleSMC，
+// 都用 @_silgen_name 直接调 C，不经过任何子进程或 JSON 解析。
+// 第一次调用 gpu_scaled_ratio 是 prime（返回 0），之后每次取真实值。
+@_silgen_name("macmonbar_sensors_init")      func c_sensors_init() -> Int32
+@_silgen_name("macmonbar_sensors_close")     func c_sensors_close()
+@_silgen_name("macmonbar_gpu_scaled_ratio")  func c_gpu_ratio() -> Double
+@_silgen_name("macmonbar_cpu_temp_c")        func c_cpu_temp() -> Double
+@_silgen_name("macmonbar_gpu_temp_c")        func c_gpu_temp() -> Double
+
 // MacMonBar — 菜单栏版 macmon
 //
 // 状态栏：CPU / GPU / RAM 百分比 + 温度（默认关闭）；标签固定英文，菜单与面板按系统中英双语（见 Loc）
 // 面板：四项趋势图 2 × 2，底部逐核柱状图（可关）
 // 配色两套互不重叠（见下方 MARK）：图表用身份色（蓝 / 玫红 / 青 / 紫），数值用绿 / 琥珀 / 红梯度
-// 数据来源：CPU 与逐核由本 App 自己用 Mach 采样；GPU / 内存 / 温度来自 `macmon pipe` 子进程
+// 数据来源：CPU / 逐核 / 内存由本 App 用 Mach 本机采样；GPU 占用与温度由 src/sensors.c
+//          （原生 C，桥接 libIOReport + IOHID/AppleSMC）直接提供。零子进程、零 Python。
 // 细节（默认开关、阈值、实测宽度）见 README 与 docs/
 
 // MARK: - 基础工具
@@ -25,6 +37,7 @@ private let kPad: CGFloat = 14          // 面板左右内边距，避免顶到�
 private let kLabelSmall = NSFont.systemFont(ofSize: 11, weight: .medium)   // 面板图表标题
 private let kLabelBar = NSFont.systemFont(ofSize: 13, weight: .semibold)   // 状态栏标签：与系统菜单栏同字号（13pt），semibold 提分量
 private let kValue = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+private let kRowTitle = NSFont.menuFont(ofSize: 0)   // 与原生菜单项同一号字，混排时不会一大一小
 
 private func isDark(_ v: NSView) -> Bool {
     v.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -161,6 +174,42 @@ struct CPUCoreSampler {
     }
 }
 
+// MARK: - 内存采样（Mach，本机）
+
+/// 内存占用率：一次 host_statistics64，无需子进程。
+///
+/// 口径与 macmon 完全一致（已按其源码核对，实测差 7 页 ≈ 0.1 MB）：
+///   used = active + inactive + wire + speculative + compressor − purgeable − external
+/// 注意 external / purgeable 是 active / inactive 的子集，所以要减掉，
+/// 否则会把"文件缓存占的可回收页"算成已用。
+struct MemorySampler {
+    private static let totalBytes: UInt64 = ProcessInfo.processInfo.physicalMemory
+    private static let pageSize: UInt64 = UInt64(sysconf(_SC_PAGESIZE))
+
+    func sample() -> Double? {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+        let kr = withUnsafeMutablePointer(to: &stats) { p -> kern_return_t in
+            p.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS, Self.totalBytes > 0 else { return nil }
+
+        let a = Int64(stats.active_count)
+        let i = Int64(stats.inactive_count)
+        let w = Int64(stats.wire_count)
+        let s = Int64(stats.speculative_count)
+        let c = Int64(stats.compressor_page_count)
+        let pu = Int64(stats.purgeable_count)
+        let ex = Int64(stats.external_page_count)
+        let pages = max(a + i + w + s + c - pu - ex, 0)
+
+        let used = UInt64(pages) * Self.pageSize
+        return min(max(Double(used) / Double(Self.totalBytes), 0), 1)
+    }
+}
+
 // MARK: - 状态栏：CPU / GPU / RAM 三条 + 温度
 
 final class MeterView: NSView {
@@ -171,7 +220,7 @@ final class MeterView: NSView {
     var showTemp = false                 // 默认关闭
     var showBars = false                 // 默认隐藏状态栏进度条（菜单可开启）
     var colorPct = true                  // 百分比按占用率着色，默认开启（菜单可关闭）
-    var macmonAvailable = true           // false 时 GPU / 内存 / 温度显示"—"
+    var sensorsAvailable = true           // false 时 GPU / 温度显示"—"（原生传感器未初始化时）
 
     private enum L {
         static let pad: CGFloat = 3       // 状态项左右内边距
@@ -214,13 +263,13 @@ final class MeterView: NSView {
         var x: CGFloat = L.pad
         x = metric(name: "CPU", ratio: cpu, available: true, series: cpuSeriesColor(self), x: x)
         x = advanceAfter(x)
-        x = metric(name: "GPU", ratio: gpu, available: macmonAvailable, series: gpuSeriesColor(self), x: x)
+        x = metric(name: "GPU", ratio: gpu, available: sensorsAvailable, series: gpuSeriesColor(self), x: x)
         x = advanceAfter(x)
-        x = metric(name: "RAM", ratio: mem, available: macmonAvailable, series: memSeriesColor(self), x: x)  // 状态栏标签固定英文
+        x = metric(name: "RAM", ratio: mem, available: true, series: memSeriesColor(self), x: x)  // 状态栏标签固定英文；内存为本机采样，不依赖 macmon
         if showTemp {
             x = advanceAfter(x)
             let r = NSRect(x: x, y: 0, width: L.temp, height: bounds.height)
-            if macmonAvailable {
+            if sensorsAvailable {
                 drawText(String(format: "%.0f°C", temp), in: r, font: kValue, color: tempValueColor(self, temp), align: .right)
             } else {
                 drawText("—", in: r, font: kValue, color: .tertiaryLabelColor, align: .right)
@@ -280,7 +329,7 @@ final class PanelView: NSView {
     var tempHist: [Double] = []
     var cores: [Double] = []
     var showCores = true                 // 默认打开
-    var macmonAvailable = true           // false 时 GPU / 内存 / 温度显示"—"
+    var sensorsAvailable = true           // false 时 GPU / 温度显示"—"（原生传感器未初始化时）
     let capacity = 120
 
     private enum L {
@@ -312,13 +361,13 @@ final class PanelView: NSView {
               available: true,
               rect: NSRect(x: c.minX, y: row0Y, width: cellW, height: L.cellH))
         trend(name: "GPU", data: gpuHist, series: gpuSeriesColor(self), current: gpu, unit: "%", ratio: gpu,
-              available: macmonAvailable,
+              available: sensorsAvailable,
               rect: NSRect(x: c.minX + cellW + L.colGap, y: row0Y, width: cellW, height: L.cellH))
         trend(name: Loc.t("内存", "RAM"), data: memHist, series: memSeriesColor(self), current: mem, unit: "%", ratio: mem,
-              available: macmonAvailable,
+              available: true,
               rect: NSRect(x: c.minX, y: row1Y, width: cellW, height: L.cellH))
         trend(name: Loc.t("温度", "Temperature"), data: tempHist, series: tempSeriesColor(self), current: temp, unit: "°C",
-              ratio: (temp - 30) / 70, available: macmonAvailable,
+              ratio: (temp - 30) / 70, available: sensorsAvailable,
               rect: NSRect(x: c.minX + cellW + L.colGap, y: row1Y, width: cellW, height: L.cellH))
 
         if coreBlock > 0 {
@@ -405,53 +454,118 @@ final class PanelView: NSView {
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
 }
 
+// MARK: - 菜单行：只画「勾选 + 标题」，不再挂右列说明
+//
+// 行尾那列开销标注（"+48pt · 内存≈0" 之类）已经去掉：每一项实测都是 0 字节，
+// 占着半行宽度却没有信息量。数字没有丢——它们在 docs/performance.md 里，
+// 想查代价的人去那儿看，菜单只负责让你开关。
+//
+// 之所以仍然自绘：原生 NSMenuItem 的行高和缩进不可控，这里要勾选列与面板
+// 内边距对齐、标题垂直居中。代价是高亮底色和点击转发要自己接（见下）。
+// 行宽不再被说明文字撑开，由标题决定。
+final class MenuRowView: NSView {
+    static let rowHeight: CGFloat = 22
+
+    private let rowTitle: String
+    private weak var item: NSMenuItem?
+
+    private static let checkCol: CGFloat = 20    // 勾选列宽：让标题起点与原生菜单行对齐
+    private static let tailPad: CGFloat = 13     // 右端留白，与面板内边距同一档
+
+    init(item: NSMenuItem, title: String) {
+        self.rowTitle = title
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: Self.rowHeight))
+        self.item = item
+        autoresizingMask = [.width]           // 行宽跟着菜单走
+    }
+    required init?(coder: NSCoder) { fatalError("手写布局，不用 Storyboard") }
+
+    override var intrinsicContentSize: NSSize {
+        let w = Self.checkCol + line(rowTitle, font: kRowTitle).size().width + Self.tailPad
+        return NSSize(width: w, height: Self.rowHeight)
+    }
+
+    override var acceptsFirstResponder: Bool { false }
+
+    /// 上一次画的时候是不是高亮态。用来判断「状态变了没有」，
+    /// 避免菜单打开期间无脑重绘（详见 AppDelegate.syncRows）。
+    private var lastHot = false
+
+    func syncHighlight() {
+        if (item?.isHighlighted ?? false) != lastHot { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let hot = item?.isHighlighted ?? false
+        lastHot = hot
+        if hot {
+            // 原生菜单的高亮色本来就跟着系统强调色走，直接用 controlAccentColor；
+            // 旧版的 selectedMenuItemColor 在 macOS 11 已废弃（官方建议挂 NSVisualEffectView，
+            // 对一行自绘菜单来说太重）。
+            NSColor.controlAccentColor.setFill()
+            bounds.fill()
+        }
+
+        if item?.state == .on {
+            let c = line("✓", font: NSFont.systemFont(ofSize: 11, weight: .semibold), hot: hot)
+            c.draw(at: NSPoint(x: 5, y: centerY(c)))
+        }
+
+        let t = line(rowTitle, font: kRowTitle, hot: hot)
+        t.draw(at: NSPoint(x: Self.checkCol, y: centerY(t)))
+    }
+
+    /// 视图接手之后，点击不会自动落到 NSMenuItem 的动作上，得自己转一次。
+    override func mouseUp(with event: NSEvent) {
+        guard let it = item, let m = it.menu else { return }
+        m.performActionForItem(at: m.index(of: it))
+        m.cancelTracking()
+    }
+
+    private func centerY(_ s: NSAttributedString) -> CGFloat { (bounds.height - s.size().height) / 2 }
+
+    private func line(_ s: String, font: NSFont, hot: Bool = false, muted: Bool = false) -> NSAttributedString {
+        NSAttributedString(string: s, attributes: [
+            .font: font,
+            .foregroundColor: hot ? NSColor.selectedMenuItemTextColor.withAlphaComponent(muted ? 0.7 : 1)
+                                  : (muted ? NSColor.secondaryLabelColor : NSColor.labelColor)
+        ])
+    }
+}
+
 // MARK: - 应用
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let meter = MeterView()
     private let panel = PanelView()
-    private var proc: Process?
-    private var buf = Data()
     private var intervalMs = 2000
     private var menu: NSMenu!
     private var panelItem: NSMenuItem!
     private var menuOpen = false
+    private var rowSync: Timer?
     private var cpuSampler = CPUCoreSampler()
+    private let memSampler = MemorySampler()
     private var cpuLoad: Double = 0
+    private var memLoad: Double = 0
     private var lastSignature = ""
 
-    /// macmon 是否在位。它同时决定三件事：
-    /// GPU / 内存 / 温度 有无数据、菜单是否显示安装提示、CPU 由谁驱动心跳。
-    private var macmonAvailable = false
-    private var fallbackTimer: Timer?
+    /// 原生传感器是否就绪（C 模块 init 成功）。失败则 GPU / 温度 显示 "—"，
+    /// 但 CPU / 逐核 / 内存仍是本机采样，菜单栏照常工作。
+    private var sensorsAvailable = false
 
-    /// 后台线程收到的原始字节先入队，再由挂在 RunLoop .common 模式上的定时器取走。
-    /// 原因：NSMenu 展开时会跑 NSEventTrackingRunLoopMode 的嵌套循环，
-    /// DispatchQueue.main 的 block 在该模式下不会被派发，导致菜单展开时图表静止。
-    private let pendingLock = NSLock()
-    private var pending = Data()
-    private var drainTimer: Timer?
+    /// 统一采样定时器：CPU / 内存 / GPU / 温度 全由它驱动，挂在 RunLoop .common
+    /// 上，菜单展开时也照常触发。
+    private var samplerTimer: Timer?
 
     private static let fixedPanelWidth: CGFloat = 300
 
-    /// 按 用户本地目录 → Homebrew(Apple Silicon) → Homebrew(Intel) 的顺序找 macmon。
-    /// 只认 ~/.local/bin 会让 `brew install macmon` 的用户永远搜不到（brew 装到 /opt/homebrew/bin），
-    /// 结果是 GPU / 内存 / 温度 三项全显示 "—"。nil 表示没装。
-    private var macmonPath: String? {
-        let fm = FileManager.default
-        let candidates = [
-            ("~/.local/bin/macmon" as NSString).expandingTildeInPath,
-            "/opt/homebrew/bin/macmon",
-            "/usr/local/bin/macmon"
-        ]
-        return candidates.first { fm.isExecutableFile(atPath: $0) }
-    }
-
     func applicationDidFinishLaunching(_: Notification) {
-        macmonAvailable = macmonPath != nil
-        meter.macmonAvailable = macmonAvailable
-        panel.macmonAvailable = macmonAvailable
+        // 原生 C 传感器：GPU 占用走 libIOReport，温度走 IOHID/AppleSMC。
+        // 失败（极少）只影响 GPU / 温度，CPU / 内存 仍由本 App 自己采样。
+        sensorsAvailable = (c_sensors_init() == 0)
+        meter.sensorsAvailable = sensorsAvailable
+        panel.sensorsAvailable = sensorsAvailable
 
         statusItem.button?.title = ""
         statusItem.button?.image = nil
@@ -462,13 +576,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.addSubview(meter)
         statusItem.length = meter.preferredWidth
         buildMenu()
-        installDrainTimer()
         startSampler()
     }
 
-    func applicationWillTerminate(_: Notification) { proc?.terminate() }
+    func applicationWillTerminate(_: Notification) { c_sensors_close() }
 
     private var contentWidth: CGFloat { Self.fixedPanelWidth - 24 }
+
+    /// 造一个自绘开关行：勾选 + 标题，行尾不再挂开销说明。
+    /// 代价数字没有丢——在 docs/performance.md 里，每项实测都是 0 字节，
+    /// 钉在行尾只是白占半行宽度。
+    private func rowItem(_ title: String, tip: String,
+                         action: Selector, on: Bool, tag: Int = 0) -> NSMenuItem {
+        let it = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        it.target = self
+        it.state = on ? .on : .off
+        it.tag = tag
+        it.toolTip = tip
+        let row = MenuRowView(item: it, title: title)
+        // 行宽锁死在面板宽度上：菜单不会被超长标题撑宽，各行也保持同宽。
+        row.frame = NSRect(x: 0, y: 0, width: contentWidth, height: MenuRowView.rowHeight)
+        it.view = row
+        return it
+    }
+
+    /// 自绘行接手之后，改 state 不会自动重画，勾记得手动刷。
+    private func refreshRow(_ item: NSMenuItem, _ on: Bool) {
+        item.state = on ? .on : .off
+        (item.view as? MenuRowView)?.needsDisplay = true
+    }
 
     private func buildMenu() {
         menu = NSMenu()
@@ -480,45 +616,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(panelItem)
         menu.addItem(NSMenuItem.separator())
 
-        if !macmonAvailable {
-            let hint = NSMenuItem(title: Loc.t("未找到 macmon —— 点此查看安装说明",
-                                               "macmon not found — click for install instructions"),
-                                  action: #selector(openMacmonDocs), keyEquivalent: "")
-            hint.target = self
-            menu.addItem(hint)
-            menu.addItem(NSMenuItem.separator())
-        }
-
         // 核数从内核读，不写死——写死会在 M4 之类的机器上给出错误数字
         let n = ProcessInfo.processInfo.activeProcessorCount
-        let coreItem = NSMenuItem(title: Loc.t("显示每个核心（\(n) 核）", "Show every core (\(n) cores)"), action: #selector(toggleCores(_:)), keyEquivalent: "")
-        coreItem.target = self
-        coreItem.state = .on                 // 默认打开
-        menu.addItem(coreItem)
+        menu.addItem(rowItem(Loc.t("显示每个核心（\(n) 核）", "Per-core bars (\(n) cores)"),
+                             tip: Loc.t("进程内反复开关实测：内存 Δ = 0 字节。开启后只在面板展开时底部多 36pt（coreGap 10 + coreH 26）画一排逐核柱子，面板收起时不占内存。",
+                                        "Intra-process ON/OFF cycling: RAM Δ = 0 bytes. On, it only adds 36pt (coreGap 10 + coreH 26) of per-core bars at the panel bottom when expanded; no RAM when the panel is closed."),
+                             action: #selector(toggleCores(_:)),
+                             on: panel.showCores))
 
-        let tempItem = NSMenuItem(title: Loc.t("状态栏显示温度", "Show temperature in menu bar"), action: #selector(toggleTemp(_:)), keyEquivalent: "")
-        tempItem.target = self
-        tempItem.state = .off                // 默认关闭
-        menu.addItem(tempItem)
+        menu.addItem(rowItem(Loc.t("状态栏显示温度", "Temperature in menu bar"),
+                             tip: Loc.t("进程内反复开关实测：内存 footprint Δ = 0 字节，CPU Δ 在 ±0.04 pp 噪声内。变的只是状态栏那一行多 48pt（显示 \"99°C\"），MeterView 是绘制式渲染，不占额外内存。",
+                                        "Intra-process ON/OFF cycling: footprint Δ = 0 bytes, CPU Δ within ±0.04 pp noise. The only change is a 48pt-wider menu-bar slot (the \"99°C\" readout); MeterView draws each frame, so no extra RAM."),
+                             action: #selector(toggleTemp(_:)),
+                             on: meter.showTemp))
 
-        let barsItem = NSMenuItem(title: Loc.t("状态栏显示进度条", "Show gauges in menu bar"), action: #selector(toggleBars(_:)), keyEquivalent: "")
-        barsItem.target = self
-        barsItem.state = .off                // 默认隐藏
-        menu.addItem(barsItem)
+        menu.addItem(rowItem(Loc.t("状态栏显示进度条", "Gauges in menu bar"),
+                             tip: Loc.t("进程内反复开关实测：内存 Δ = 0 字节。开关只是把状态栏加宽 81pt，每帧多画 6 个圆角矩形（CPU 增量测不出），并无新增缓冲区。",
+                                        "Intra-process ON/OFF cycling: RAM Δ = 0 bytes. The toggle only widens the bar by 81pt and draws 6 extra rounded rects per frame (CPU gain unmeasurable); no new buffer."),
+                             action: #selector(toggleBars(_:)),
+                             on: meter.showBars))
 
-        let colorItem = NSMenuItem(title: Loc.t("百分比颜色区分", "Colour-code percentages"), action: #selector(toggleColor(_:)), keyEquivalent: "")
-        colorItem.target = self
-        colorItem.state = .on                // 默认开启
-        menu.addItem(colorItem)
+        menu.addItem(rowItem(Loc.t("百分比颜色区分", "Colour-code percentages"),
+                             tip: Loc.t("进程内反复开关实测：内存 Δ = 0 字节。开启后每帧多建 3 个 NSColor（CPU/GPU/RAM 各一），瞬时分配、随即释放，稳态内存不涨。",
+                                        "Intra-process ON/OFF cycling: RAM Δ = 0 bytes. On, it builds 3 extra NSColors per frame (CPU/GPU/RAM), transient allocations, no steady RAM growth."),
+                             action: #selector(toggleColor(_:)),
+                             on: meter.colorPct))
 
         let intervalItem = NSMenuItem(title: Loc.t("刷新间隔", "Refresh interval"), action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for ms in [1000, 2000, 5000] {
-            let it = NSMenuItem(title: Loc.t("\(ms / 1000) 秒", "\(ms / 1000) s"), action: #selector(setInterval(_:)), keyEquivalent: "")
-            it.target = self
-            it.tag = ms
-            it.state = ms == intervalMs ? .on : .off
-            sub.addItem(it)
+            sub.addItem(rowItem(Loc.t("\(ms / 1000) 秒", "\(ms / 1000) s"),
+                                tip: Loc.t("刷新快慢不改变内存：缓冲区大小固定，变的只是每秒采样几次（影响的是 CPU，约 ±0.1%）。",
+                                           "Refresh rate does not change memory: buffers are fixed size; only the sampling rate changes (that moves CPU, roughly ±0.1%)."),
+                                action: #selector(setInterval(_:)),
+                                on: ms == intervalMs,
+                                tag: ms))
         }
         intervalItem.submenu = sub
         menu.addItem(intervalItem)
@@ -532,7 +664,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleCores(_ sender: NSMenuItem) {
         panel.showCores.toggle()
-        sender.state = panel.showCores ? .on : .off
+        refreshRow(sender, panel.showCores)
         panel.setFrameSize(NSSize(width: contentWidth, height: panel.preferredHeight))
         panel.needsDisplay = true
         DispatchQueue.main.async { self.menu.update() }
@@ -540,174 +672,122 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleTemp(_ sender: NSMenuItem) {
         meter.showTemp.toggle()
-        sender.state = meter.showTemp ? .on : .off
+        refreshRow(sender, meter.showTemp)
         statusItem.length = meter.preferredWidth
         meter.needsDisplay = true
     }
 
     @objc private func toggleBars(_ sender: NSMenuItem) {
         meter.showBars.toggle()
-        sender.state = meter.showBars ? .on : .off
+        refreshRow(sender, meter.showBars)
         statusItem.length = meter.preferredWidth
         meter.needsDisplay = true
     }
 
     @objc private func toggleColor(_ sender: NSMenuItem) {
         meter.colorPct.toggle()
-        sender.state = meter.colorPct ? .on : .off
+        refreshRow(sender, meter.colorPct)
         meter.needsDisplay = true
     }
 
     @objc private func setInterval(_ sender: NSMenuItem) {
         intervalMs = sender.tag
-        for it in sender.menu?.items ?? [] { it.state = it.tag == intervalMs ? .on : .off }
+        for it in sender.menu?.items ?? [] { refreshRow(it, it.tag == intervalMs) }
         cpuSampler.reset()
         startSampler()
     }
 
     @objc private func quit() {
-        proc?.terminate()
         NSApp.terminate(nil)
     }
 
-    @objc private func openMacmonDocs() {
-        if let url = URL(string: "https://github.com/vladkens/macmon#-installation") {
-            NSWorkspace.shared.open(url)
-        }
+    func menuWillOpen(_: NSMenu) {
+        menuOpen = true
+        refreshPanel()
+        startRowSync()
     }
 
-    func menuWillOpen(_: NSMenu) { menuOpen = true; refreshPanel() }
-    func menuDidClose(_: NSMenu) { menuOpen = false }
-
-    private func startSampler() {
-        proc?.terminate()
-        proc = nil
-        fallbackTimer?.invalidate()
-        fallbackTimer = nil
-        buf.removeAll(keepingCapacity: true)
-
-        macmonAvailable = macmonPath != nil
-        meter.macmonAvailable = macmonAvailable
-        panel.macmonAvailable = macmonAvailable
-
-        // 没有 macmon：GPU / 内存 / 温度 无从取得（显示"—"），
-        // 但 CPU 与逐核仍由本 App 自己采样，不能跟着一起停摆——
-        // 这里用独立 Timer 驱动，而不是依赖 macmon 的 JSON 到达。
-        guard macmonAvailable else {
-            scheduleCPUTick()
-            meter.needsDisplay = true
-            return
-        }
-
-        guard let bin = macmonPath else { return }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: bin)
-        p.arguments = ["pipe", "-i", String(intervalMs)]
-        p.standardError = FileHandle.nullDevice
-
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if data.isEmpty { return }
-            self?.enqueue(data)
-        }
-        proc = p
-
-        // macmon 在但拉不起来（权限 / Gatekeeper / 架构不匹配）时不能整栏停摆：
-        // 退回 CPU 自采样，保证菜单栏至少还是活的。
-        do {
-            try p.run()
-        } catch {
-            scheduleCPUTick()
-        }
+    func menuDidClose(_: NSMenu) {
+        menuOpen = false
+        rowSync?.invalidate()
+        rowSync = nil
     }
 
-    /// macmon 缺失或启动失败时的兜底心跳
-    private func scheduleCPUTick() {
-        fallbackTimer?.invalidate()
-        let t = Timer(timeInterval: Double(intervalMs) / 1000.0, repeats: true) { [weak self] _ in
-            self?.tickCPU()
+    /// 自绘行的底色取决于 isHighlighted，但菜单跟踪期间 AppKit 不保证
+    /// 会给这些自定义 view 发重绘。菜单开着时以 30 Hz 探一下有没有变，
+    /// **状态没变就不画**，所以真正重绘的只有鼠标划过的那几行。
+    /// 菜单一关就停，常驻开销为零。
+    private func startRowSync() {
+        guard rowSync == nil else { return }
+        let t = Timer(timeInterval: 1.0 / 20, repeats: true) { [weak self] _ in
+            guard let self, let m = self.menu else { return }
+            Self.syncRows(m)
         }
         RunLoop.main.add(t, forMode: .common)
-        fallbackTimer = t
+        rowSync = t
     }
 
-    /// 唯一的 CPU 采样入口：菜单栏、面板、历史曲线都从这里取值。
-    private func sampleCPU() {
+    private static func syncRows(_ m: NSMenu) {
+        for it in m.items {
+            (it.view as? MenuRowView)?.syncHighlight()
+            if let sub = it.submenu { syncRows(sub) }
+        }
+    }
+
+    /// 统一采样入口：CPU / 逐核 / 内存（本机 Mach）+ GPU 占用 / 温度（原生 C 传感器）。
+    /// 全部由一个挂在 RunLoop .common 上的 Timer 驱动，菜单展开（eventTracking）时也照常触发。
+    private func startSampler() {
+        samplerTimer?.invalidate()
+        samplerTimer = nil
+        // sensorsAvailable 在 applicationDidFinishLaunching 里由 c_sensors_init() 决定：
+        // 成功则 GPU / 温度 来自原生 C 传感器；失败则这两项显示 "—"，
+        // 但 CPU / 内存 仍是本机采样，菜单栏照常工作。
+        let t = Timer(timeInterval: Double(intervalMs) / 1000.0, repeats: true) { [weak self] _ in
+            self?.tick()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        samplerTimer = t
+        tick()   // 立即画一帧，避免首屏空等一个完整间隔
+    }
+
+    /// 一次完整采样：本机 CPU / 内存，加上（若传感器就绪）C 模块的 GPU 占用与温度，
+    /// 更新状态栏、面板与历史曲线。
+    private func tick() {
+        sampleLocal()   // CPU + 逐核 + 内存（本机 Mach）
+
+        if sensorsAvailable {
+            let gpu = c_gpu_ratio()      // 首次调用是 prime，返回 0，之后为真实占用
+            let ct  = c_cpu_temp()
+            meter.gpu = gpu
+            meter.temp = ct
+            panel.gpu = gpu
+            panel.temp = ct
+            append(&panel.gpuHist, gpu)
+            append(&panel.tempHist, (ct - 30) / 70)
+        }
+
+        meter.cpu = cpuLoad
+        meter.mem = memLoad
+        panel.cpu = cpuLoad
+        panel.mem = memLoad
+
+        let sig = String(format: "%.0f|%.0f|%.0f|%.0f",
+                         cpuLoad * 100, meter.gpu * 100, memLoad * 100, meter.temp)
+        guard sig != lastSignature else { return }
+        lastSignature = sig
+        meter.needsDisplay = true
+        if menuOpen { refreshPanel() }
+    }
+
+    /// 唯一的本机采样入口（CPU + 逐核 + 内存）：菜单栏、面板、历史曲线都从这里取值。
+    private func sampleLocal() {
         let s = cpuSampler.sample()
         if let load = s.overall { cpuLoad = load }
         if !s.perCore.isEmpty { panel.cores = s.perCore }
         append(&panel.cpuHist, cpuLoad)
-    }
 
-    private func tickCPU() {
-        sampleCPU()
-        meter.cpu = cpuLoad
-        panel.cpu = cpuLoad
-        meter.needsDisplay = true
-    }
-
-    private func enqueue(_ d: Data) {
-        pendingLock.lock()
-        pending.append(d)
-        pendingLock.unlock()
-    }
-
-    /// 以 .common 模式挂在 Main RunLoop 上，因此在菜单展开（eventTracking）时同样会被触发。
-    @objc private func drainPending() {
-        pendingLock.lock()
-        let d = pending
-        pending.removeAll(keepingCapacity: true)
-        pendingLock.unlock()
-        if !d.isEmpty { ingest(d) }
-    }
-
-    private func installDrainTimer() {
-        drainTimer?.invalidate()
-        let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.drainPending() }
-        RunLoop.main.add(t, forMode: .common)
-        drainTimer = t
-    }
-
-    private func ingest(_ data: Data) {
-        buf.append(data)
-        while let idx = buf.firstIndex(of: 0x0A) {
-            let line = Data(buf.prefix(upTo: idx))
-            buf.removeSubrange(buf.startIndex...idx)
-            guard let dict = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-            apply(dict)
-            if menuOpen { refreshPanel() }
-        }
-    }
-
-    private func apply(_ d: [String: Any]) {
-        sampleCPU()
-
-        let gpu = num(d["gpu_scaled_ratio"])
-        let temp = (d["temp"] as? [String: Any]).map { num($0["cpu_temp_avg"]) } ?? 0
-        let mem = d["memory"] as? [String: Any] ?? [:]
-        let memPct = num(mem["ram_total"]) > 0 ? num(mem["ram_usage"]) / num(mem["ram_total"]) : 0
-
-        meter.cpu = cpuLoad
-        meter.gpu = gpu
-        meter.mem = memPct
-        meter.temp = temp
-
-        panel.cpu = cpuLoad
-        panel.gpu = gpu
-        panel.mem = memPct
-        panel.temp = temp
-
-        append(&panel.cpuHist, cpuLoad)
-        append(&panel.gpuHist, gpu)
-        append(&panel.memHist, memPct)
-        append(&panel.tempHist, (temp - 30) / 70)
-
-        let sig = String(format: "%.0f|%.0f|%.0f|%.0f", cpuLoad * 100, gpu * 100, memPct * 100, temp)
-        guard sig != lastSignature else { return }
-        lastSignature = sig
-        meter.needsDisplay = true
+        if let m = memSampler.sample() { memLoad = m }
+        append(&panel.memHist, memLoad)
     }
 
     private func append(_ arr: inout [Double], _ v: Double) {
@@ -719,10 +799,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.needsDisplay = true
         panel.setFrameSize(NSSize(width: contentWidth, height: panel.preferredHeight))
         DispatchQueue.main.async { self.menu.update() }
-    }
-
-    private func num(_ v: Any?) -> Double {
-        return (v as? NSNumber)?.doubleValue ?? 0   // JSONSerialization 只会给 NSNumber
     }
 }
 
