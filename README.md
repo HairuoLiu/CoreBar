@@ -66,7 +66,7 @@ Click the menu-bar item and pick from the menu: percentage colouring (**on**), g
 <details>
 <summary><b>For AI agents — installing this unattended</b></summary>
 
-Resolve the machine first: Apple Silicon (`uname -m` = `arm64`) and macOS 13+ (`sw_vers -productVersion`). Abort with a clear message if either fails — this app is arm64-only and will not run on Intel.
+Resolve the machine first: Apple Silicon (`arm64`) or Intel (`x86_64`), and macOS 13+ (`sw_vers -productVersion`). CoreBar is distributed as a Universal Binary supporting both architectures.
 
 ```bash
 #!/usr/bin/env bash
@@ -119,7 +119,7 @@ Notes for an agent:
 | `swiftc: error: unable to find utility` | Same as above | Same as above |
 | Nothing happens after `open CoreBar.app` | It is `LSUIElement` — there is no window or Dock icon by design | Look at the menu bar |
 | The panel freezes while the menu is open | Fixed in 0.2.0 (a `DispatchQueue.main.async` redraw does not run inside `NSEventTrackingRunLoopMode`) | Update — [details](docs/how-it-works.md) |
-| Builds fail on Intel | The target is `arm64-apple-macosx13.0` | Not supported; a menu-bar meter is pointless on Intel |
+| Intel Mac architecture support | Universal Binary (`arm64` + `x86_64`) | Fully supported with physical core aggregation and dual GPU (AMD/Intel) separation |
 | CPU reads differently from Activity Monitor | Expected. Activity Monitor shows frequency-weighted residency, the same metric macmon uses | [details](docs/how-it-works.md) |
 
 </details>

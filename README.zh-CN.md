@@ -66,7 +66,7 @@ open CoreBar.app
 <details>
 <summary><b>给 AI Agent——无人值守安装</b></summary>
 
-先确认环境：Apple Silicon（`uname -m` = `arm64`）与 macOS 13+（`sw_vers -productVersion`）。任一不满足就明确报错退出——本 App 只有 arm64 版本，在 Intel 上跑不起来。
+先确认环境：Apple Silicon（`arm64`）或 Intel（`x86_64`）机器，以及 macOS 13+（`sw_vers -productVersion`）。CoreBar 以 Universal Binary 形式构建，原生支持双平台。
 
 ```bash
 #!/usr/bin/env bash
@@ -119,7 +119,7 @@ pgrep -x CoreBar >/dev/null && echo "OK: CoreBar running" || { echo "启动失�
 | 构建时报 `swiftc: error: unable to find utility` | 同上 | 同上 |
 | `open CoreBar.app` 之后什么都没发生 | 它是 `LSUIElement`，设计上就没有窗口和 Dock 图标 | 看菜单栏 |
 | 菜单展开时面板冻住 | 0.2.0 已修（`DispatchQueue.main.async` 的重绘在 `NSEventTrackingRunLoopMode` 里不会执行） | 升级，[细节](docs/how-it-works.md) |
-| Intel 机器上构建失败 | 编译目标是 `arm64-apple-macosx13.0` | 不支持；Intel 上做菜单栏监视器没有意义 |
+| Intel Mac 架构支持 | 构建产物为 Universal Binary (`arm64` + `x86_64`) | 官方原生支持：物理核心智能聚合、核显与独显双通道细分、SMC 硬件级测温 |
 | CPU 数值和活动监视器不一致 | 预期之内。活动监视器显示的是频率加权驻留度，和 macmon 同一口径 | [细节](docs/how-it-works.md) |
 
 </details>
