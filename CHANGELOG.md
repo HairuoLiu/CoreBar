@@ -4,7 +4,7 @@ All notable changes to CoreBar. Versions are also tagged as GitHub releases.
 
 <!-- 每条记录先英文后中文；中文标题下为对应中文说明。 -->
 
-## 0.4.0 — 2026-10-20
+## 0.4.0 — 2026-10-21
 
 **EN**
 
