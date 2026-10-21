@@ -10,6 +10,9 @@ import Darwin
 @_silgen_name("corebar_sensors_init")      func c_sensors_init() -> Int32
 @_silgen_name("corebar_sensors_close")     func c_sensors_close()
 @_silgen_name("corebar_gpu_scaled_ratio")  func c_gpu_ratio() -> Double
+@_silgen_name("corebar_dgpu_ratio")        func c_dgpu_ratio() -> Double
+@_silgen_name("corebar_igpu_ratio")        func c_igpu_ratio() -> Double
+@_silgen_name("corebar_has_dual_gpu")      func c_has_dual_gpu() -> Int32
 @_silgen_name("corebar_cpu_temp_c")        func c_cpu_temp() -> Double
 @_silgen_name("corebar_gpu_temp_c")        func c_gpu_temp() -> Double
 
@@ -106,6 +109,15 @@ private enum Loc {
 // MARK: - 全核 CPU 采样（Mach）
 
 struct CPUCoreSampler {
+    static let physicalCoreCount: Int = {
+        var count: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        if sysctlbyname("hw.physicalcpu", &count, &size, nil, 0) == 0 && count > 0 {
+            return Int(count)
+        }
+        return ProcessInfo.processInfo.activeProcessorCount
+    }()
+
     private var prevUsed: UInt64 = 0
     private var prevTotal: UInt64 = 0
     private var prevCore: [[UInt64]] = []
@@ -141,9 +153,9 @@ struct CPUCoreSampler {
 
     mutating func sample() -> (overall: Double?, perCore: [Double]) {
         guard let t = readTicks() else { return (nil, []) }
-        var perCore: [Double] = []
+        var rawCores: [Double] = []
         if hasBaseline, prevCore.count == t.cores.count {
-            perCore = zip(prevCore, t.cores).map { a, b in
+            rawCores = zip(prevCore, t.cores).map { a, b in
                 let du = (b[0] + b[1] + b[2]) - (a[0] + a[1] + a[2])
                 let dt = (b[0] + b[1] + b[2] + b[3]) - (a[0] + a[1] + a[2] + a[3])
                 return dt > 0 ? Double(du) / Double(dt) : 0
@@ -160,7 +172,25 @@ struct CPUCoreSampler {
             hasBaseline = true
             return (nil, [])
         }
-        guard dTotal > 0 else { return (nil, perCore) }
+        guard dTotal > 0 else { return (nil, rawCores) }
+
+        // 真实物理核心聚合：如果是超线程架构（如 8 逻辑核 / 4 物理核），
+        // 将对应每个物理核的超线程逻辑核心数据取平均，呈现真实的物理核负载。
+        var perCore: [Double] = rawCores
+        let physCount = Self.physicalCoreCount
+        if !rawCores.isEmpty && rawCores.count > physCount && rawCores.count % physCount == 0 {
+            let stride = rawCores.count / physCount
+            var physList: [Double] = []
+            for p in 0..<physCount {
+                var sum: Double = 0
+                for s in 0..<stride {
+                    sum += rawCores[p * stride + s]
+                }
+                physList.append(sum / Double(stride))
+            }
+            perCore = physList
+        }
+
         return (Double(dUsed) / Double(dTotal), perCore)
     }
 
@@ -323,6 +353,9 @@ final class PanelView: NSView {
     var gpu: Double = 0
     var mem: Double = 0
     var temp: Double = 0
+    var dgpuRatio: Double = -1
+    var igpuRatio: Double = -1
+    var hasDualGpu: Bool = false
     var cpuHist: [Double] = []
     var gpuHist: [Double] = []
     var memHist: [Double] = []
@@ -336,7 +369,7 @@ final class PanelView: NSView {
         static let cellH: CGFloat = 44    // 标题 15 + 图 29
         static let colGap: CGFloat = 12
         static let rowGap: CGFloat = 8
-        static let coreH: CGFloat = 26
+        static let coreH: CGFloat = 28
         static let coreGap: CGFloat = 10
     }
 
@@ -360,7 +393,20 @@ final class PanelView: NSView {
         trend(name: "CPU", data: cpuHist, series: cpuSeriesColor(self), current: cpu, unit: "%", ratio: cpu,
               available: true,
               rect: NSRect(x: c.minX, y: row0Y, width: cellW, height: L.cellH))
-        trend(name: "GPU", data: gpuHist, series: gpuSeriesColor(self), current: gpu, unit: "%", ratio: gpu,
+        
+        let gpuName: String
+        let gpuSub: String?
+        if hasDualGpu {
+            gpuName = "GPU"
+            let dStr = dgpuRatio >= 0 ? String(format: "%.0f%%", dgpuRatio * 100) : "—"
+            let iStr = igpuRatio >= 0 ? String(format: "%.0f%%", igpuRatio * 100) : "—"
+            gpuSub = Loc.t("独显 \(dStr) · 核显 \(iStr)", "dGPU \(dStr) · iGPU \(iStr)")
+        } else {
+            gpuName = "GPU"
+            gpuSub = nil
+        }
+
+        trend(name: gpuName, sub: gpuSub, data: gpuHist, series: gpuSeriesColor(self), current: gpu, unit: "%", ratio: gpu,
               available: sensorsAvailable,
               rect: NSRect(x: c.minX + cellW + L.colGap, y: row0Y, width: cellW, height: L.cellH))
         trend(name: Loc.t("内存", "RAM"), data: memHist, series: memSeriesColor(self), current: mem, unit: "%", ratio: mem,
@@ -375,18 +421,23 @@ final class PanelView: NSView {
         }
     }
 
-    /// 标题行（名称 + 当前值）+ 面积图。图按实际样本数铺满整格宽度
-    private func trend(name: String, data: [Double], series: NSColor, current: Double,
+    /// 标题行（名称 + 双显卡细分 + 当前值）+ 面积图。图按实际样本数铺满整格宽度
+    private func trend(name: String, sub: String? = nil, data: [Double], series: NSColor, current: Double,
                        unit: String, ratio: Double, available: Bool, rect: NSRect) {
         let headRect = NSRect(x: rect.minX, y: rect.maxY - 15, width: rect.width, height: 15)
-        drawText(name, in: headRect, font: kLabelSmall, color: series)
+        if let s = sub {
+            drawText(s, in: headRect, font: NSFont.systemFont(ofSize: 10, weight: .medium), color: series)
+        } else {
+            drawText(name, in: headRect, font: kLabelSmall, color: series)
+        }
+
         let valueText: String
         let valueColor: NSColor
         if available {
             valueText = unit == "%" ? String(format: "%.0f%%", current * 100) : String(format: "%.0f%@", current, unit)
             valueColor = unit == "%" ? levelColor(self, ratio) : tempValueColor(self, current)
         } else {
-            valueText = "—"                       // 数据源缺失，不显示会误导的 0
+            valueText = "—"
             valueColor = .tertiaryLabelColor
         }
         drawText(valueText, in: headRect, font: kValue, color: valueColor, align: .right)
@@ -395,7 +446,6 @@ final class PanelView: NSView {
         NSColor.labelColor.withAlphaComponent(0.06).setFill()
         NSBezierPath(roundedRect: chart, xRadius: 4, yRadius: 4).fill()
 
-        // 50% 参考线只对百分比有意义；温度图是 (t-30)/70 归一化的，midY 不代表任何温度
         if unit == "%" {
             let dash = NSBezierPath()
             dash.move(to: NSPoint(x: chart.minX + 2, y: chart.midY.rounded() + 0.5))
@@ -418,7 +468,6 @@ final class PanelView: NSView {
         for p in pts { area.line(to: p) }
         area.line(to: NSPoint(x: pts[pts.count - 1].x, y: chart.minY + 1))
         area.close()
-        // 29pt 高的小图上，填充太浓会把整格糊住，看不出线条起伏
         series.withAlphaComponent(isDark(self) ? 0.16 : 0.12).setFill()
         area.fill()
 
@@ -429,25 +478,31 @@ final class PanelView: NSView {
         line.lineJoinStyle = .round
         series.setStroke()
         line.stroke()
-        // 末端圆点已删：标题行右侧就写着当前值，圆点只是在小图上重复它
     }
 
-    /// 12 个核的逐核占用率
+    /// 真实物理核心柱状图与标签
     private func coreRow(rect: NSRect) {
         let n = cores.count
         guard n > 0 else { return }
-        let gap: CGFloat = 2
+        let gap: CGFloat = 4
+        let labelH: CGFloat = 10
+        let barH = rect.height - labelH
         let bw = (rect.width - CGFloat(n - 1) * gap) / CGFloat(n)
         for i in 0..<n {
             let x = rect.minX + CGFloat(i) * (bw + gap)
+            let bRect = NSRect(x: x, y: rect.minY + labelH, width: bw, height: barH)
             NSColor.labelColor.withAlphaComponent(0.08).setFill()
-            NSBezierPath(roundedRect: NSRect(x: x, y: rect.minY, width: bw, height: rect.height),
-                         xRadius: 1.5, yRadius: 1.5).fill()
+            NSBezierPath(roundedRect: bRect, xRadius: 1.5, yRadius: 1.5).fill()
             let v = min(max(cores[i], 0), 1)
-            let fh = max(2, rect.height * CGFloat(v))
+            let fh = max(2, barH * CGFloat(v))
             cpuSeriesColor(self).setFill()
-            NSBezierPath(roundedRect: NSRect(x: x, y: rect.minY, width: bw, height: fh),
+            NSBezierPath(roundedRect: NSRect(x: x, y: rect.minY + labelH, width: bw, height: fh),
                          xRadius: 1.5, yRadius: 1.5).fill()
+
+            // 标注物理核心号 Core 0..n
+            let tagRect = NSRect(x: x - 2, y: rect.minY, width: bw + 4, height: labelH)
+            drawText("C\(i)", in: tagRect, font: NSFont.systemFont(ofSize: 8, weight: .semibold),
+                     color: NSColor.secondaryLabelColor, align: .center)
         }
     }
 
@@ -616,11 +671,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(panelItem)
         menu.addItem(NSMenuItem.separator())
 
-        // 核数从内核读，不写死——写死会在 M4 之类的机器上给出错误数字
-        let n = ProcessInfo.processInfo.activeProcessorCount
-        menu.addItem(rowItem(Loc.t("显示每个核心（\(n) 核）", "Per-core bars (\(n) cores)"),
-                             tip: Loc.t("进程内反复开关实测：内存 Δ = 0 字节。开启后只在面板展开时底部多 36pt（coreGap 10 + coreH 26）画一排逐核柱子，面板收起时不占内存。",
-                                        "Intra-process ON/OFF cycling: RAM Δ = 0 bytes. On, it only adds 36pt (coreGap 10 + coreH 26) of per-core bars at the panel bottom when expanded; no RAM when the panel is closed."),
+        // 真实物理核心数（自动适配 Intel 超线程，避免虚假核心数）
+        let n = CPUCoreSampler.physicalCoreCount
+        menu.addItem(rowItem(Loc.t("显示每个物理核心（\(n) 核）", "Per-core bars (\(n) physical cores)"),
+                             tip: Loc.t("进程内反复开关实测：内存 Δ = 0 字节。已按真实物理核心进行聚合，展示真正的物理核心硬件负载。",
+                                        "Intra-process ON/OFF cycling: RAM Δ = 0 bytes. Aggregated by true physical cores to show hardware load."),
                              action: #selector(toggleCores(_:)),
                              on: panel.showCores))
 
@@ -753,17 +808,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 一次完整采样：本机 CPU / 内存，加上（若传感器就绪）C 模块的 GPU 占用与温度，
     /// 更新状态栏、面板与历史曲线。
     private func tick() {
-        sampleLocal()   // CPU + 逐核 + 内存（本机 Mach）
+        sampleLocal()   // CPU + 物理逐核 + 内存（本机 Mach）
 
         if sensorsAvailable {
-            let gpu = c_gpu_ratio()      // 首次调用是 prime，返回 0，之后为真实占用
+            let gpu = c_gpu_ratio()      // 主力显卡实时占用
+            let dgpu = c_dgpu_ratio()    // 独显 (AMD)
+            let igpu = c_igpu_ratio()    // 核显 (Intel)
+            let hasDual = (c_has_dual_gpu() != 0)
             let ct  = c_cpu_temp()
             meter.gpu = gpu
             meter.temp = ct
             panel.gpu = gpu
+            panel.dgpuRatio = dgpu
+            panel.igpuRatio = igpu
+            panel.hasDualGpu = hasDual
             panel.temp = ct
             append(&panel.gpuHist, gpu)
             append(&panel.tempHist, (ct - 30) / 70)
+
+            if hasDual {
+                let dStr = dgpu >= 0 ? String(format: "%.0f%%", dgpu * 100) : "—"
+                let iStr = igpu >= 0 ? String(format: "%.0f%%", igpu * 100) : "—"
+                statusItem.button?.toolTip = Loc.t("CPU: \(String(format: "%.0f%%", cpuLoad * 100)) | AMD独显: \(dStr) | Intel核显: \(iStr) | RAM: \(String(format: "%.0f%%", memLoad * 100))",
+                                                   "CPU: \(String(format: "%.0f%%", cpuLoad * 100)) | AMD dGPU: \(dStr) | Intel iGPU: \(iStr) | RAM: \(String(format: "%.0f%%", memLoad * 100))")
+            }
         }
 
         meter.cpu = cpuLoad
