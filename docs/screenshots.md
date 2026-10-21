@@ -42,6 +42,6 @@ Four trend charts (2 × 2) plus a per-core bar row. / 四张趋势图（2 × 2�
 
 CPU, per-core and memory still work; GPU and temperature degrade to `—` instead of a misleading `0 %`. This is the state you would see if a future macOS locked down the private APIs. / CPU、逐核与内存仍然工作；GPU 与温度降级为 `—`，而不是误导性的 `0%`。这是未来的 macOS 锁死私有 API 时你会看到的状态。
 
-![status bar without sensors](statusbar-no-macmon-light.png)
+![status bar without sensors](statusbar-degraded-light.png)
 
-![panel without sensors](panel-no-macmon-light.png)
+![panel without sensors](panel-degraded-light.png)

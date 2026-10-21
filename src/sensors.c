@@ -437,7 +437,7 @@ static double gpu_ratio_from_delta(CFTypeRef delta) {
 // Public API
 // ---------------------------------------------------------------------------
 
-int macmonbar_sensors_init(void) {
+int corebar_sensors_init(void) {
     int ok = 0;
 
     // Temperature: prefer SMC float keys, fall back to IOHID thermal.
@@ -453,7 +453,7 @@ int macmonbar_sensors_init(void) {
     return ok ? 0 : -1;
 }
 
-void macmonbar_sensors_close(void) {
+void corebar_sensors_close(void) {
     if (g_samplePrev) { CFRelease(g_samplePrev); g_samplePrev = NULL; }
     if (g_subs)  { CFRelease(g_subs);  g_subs = NULL; }
     if (g_subbed){ CFRelease(g_subbed);g_subbed = NULL; }
@@ -464,7 +464,7 @@ void macmonbar_sensors_close(void) {
     if (g_ioreport) { dlclose(g_ioreport); g_ioreport = NULL; }
 }
 
-double macmonbar_gpu_scaled_ratio(void) {
+double corebar_gpu_scaled_ratio(void) {
     if (!g_subs || !g_subbed) return 0.0;
     CFTypeRef s = g_createSamples(g_subs, g_subbed, NULL);
     if (!s) return 0.0;
@@ -478,12 +478,12 @@ double macmonbar_gpu_scaled_ratio(void) {
     return r;
 }
 
-double macmonbar_cpu_temp_c(void) {
+double corebar_cpu_temp_c(void) {
     if (g_tempSource == 1) return smc_avg_temp(g_cpuKeys, g_cpuCount);
     double cpu = 0, gpu = 0; iohid_temps(&cpu, &gpu); return cpu;
 }
 
-double macmonbar_gpu_temp_c(void) {
+double corebar_gpu_temp_c(void) {
     if (g_tempSource == 1) return smc_avg_temp(g_gpuKeys, g_gpuCount);
     double cpu = 0, gpu = 0; iohid_temps(&cpu, &gpu); return gpu;
 }
@@ -495,21 +495,21 @@ double macmonbar_gpu_temp_c(void) {
 #ifdef STANDALONE_TEST
 #include <stdio.h>
 int main(void) {
-    int r = macmonbar_sensors_init();
+    int r = corebar_sensors_init();
     fprintf(stderr, "init=%d  tempSource=%d  smc=%d  subs=%p  subbed=%p  freqs=%d  "
                     "cpuKeys=%d  gpuKeys=%d  sizeofKeyData=%zu\n",
             r, g_tempSource, (int)g_smc, (void*)g_subs, (void*)g_subbed,
             g_gpuFreqCount, g_cpuCount, g_gpuCount, sizeof(SMCKeyData));
 
-    printf("cpu_temp_avg = %.2f C\n", macmonbar_cpu_temp_c());
-    printf("gpu_temp_avg = %.2f C\n", macmonbar_gpu_temp_c());
+    printf("cpu_temp_avg = %.2f C\n", corebar_cpu_temp_c());
+    printf("gpu_temp_avg = %.2f C\n", corebar_gpu_temp_c());
 
     // GPU ratio needs two samples (window = 1s here).
-    macmonbar_gpu_scaled_ratio();
+    corebar_gpu_scaled_ratio();
     sleep(1);
-    printf("gpu_scaled_ratio = %.4f\n", macmonbar_gpu_scaled_ratio());
+    printf("gpu_scaled_ratio = %.4f\n", corebar_gpu_scaled_ratio());
 
-    macmonbar_sensors_close();
+    corebar_sensors_close();
     return 0;
 }
 #endif

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# MacMonBar 一键构建。Swift 前端 + 原生 C 传感器（src/sensors.c），零第三方依赖、零子进程。
+# CoreBar 一键构建。Swift 前端 + 原生 C 传感器（src/sensors.c），零第三方依赖、零子进程。
 #
 # 用法: ./build.sh
-# 产物: ./MacMonBar.app
+# 产物: ./CoreBar.app
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="MacMonBar.app"
-BIN="$APP/Contents/MacOS/MacMonBar"
+APP="CoreBar.app"
+BIN="$APP/Contents/MacOS/CoreBar"
 
 if ! command -v swiftc >/dev/null 2>&1; then
   echo "错误：未找到 swiftc。请先安装 Xcode 或 Xcode Command Line Tools：" >&2

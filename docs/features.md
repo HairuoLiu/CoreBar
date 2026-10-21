@@ -30,7 +30,7 @@
 | Gauges in menu bar | off | +81 pt bar | The small level bars in the status bar |
 | Colour-code percentages | **on** | +3 colours/frame | Colours each percentage by its own load |
 | Refresh interval → 1 / 2 / 5 s | **2 s** | CPU ±0.1 % | How often the bar and charts update |
-| Quit MacMonBar | — | — | `⌘Q` |
+| Quit CoreBar | — | — | `⌘Q` |
 
 The display toggles cost **no measurable RAM or CPU**: flipping each one ON/OFF inside a single process (so baseline drift cancels) moved `ri_phys_footprint` by **0 bytes** and CPU by less than ±0.04 pp, repeated over 40–70 samples each. The only thing that actually changes is on-screen geometry, because `MeterView` draws into the menu bar each frame rather than keeping a layer backing store — so a wider bar is more drawing, not more memory. These figures used to be printed at the right edge of every menu row ("+48 pt · RAM≈0"); they were removed from the UI — a column of zeros is width without information — and live here and in [performance.md](performance.md) instead ([method](performance.md)).
 
@@ -73,7 +73,7 @@ The display toggles cost **no measurable RAM or CPU**: flipping each one ON/OFF 
 | 状态栏显示进度条 | 关 | 状态栏 +81pt | 状态栏里的小水平进度条 |
 | 百分比颜色区分 | **开** | 每帧 +3 取色 | 按各自负载给百分比上色 |
 | 刷新间隔 → 1 / 2 / 5 秒 | **2 秒** | CPU ±0.1% | 状态栏与图表的更新频率 |
-| 退出 MacMonBar | — | — | `⌘Q` |
+| 退出 CoreBar | — | — | `⌘Q` |
 
 显示类开关实测**不占可测的内存或 CPU**：在同一进程内反复 ON/OFF（基线漂移互相抵消），`ri_phys_footprint` 变化 **0 字节**，CPU 变化 < ±0.04 pp，每项重复 40–70 次采样。真正变的只有屏上几何——`MeterView` 是每帧直接往状态栏里绘制，不保留图层后备存储，所以「变宽」是多画几笔，不是多占内存。这些数字以前钉在每个菜单行的右端（「+48pt · 内存≈0」），现在从界面里去掉了——一整列零只是占宽度、没有信息量——数据保留在本页与 [performance.md](performance.md) 里（[测量方法](performance.md)）。
 

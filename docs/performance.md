@@ -10,26 +10,26 @@ Machine: Apple M6, 32 GB, macOS 13-era SDK. Memory is **physical footprint** mea
 
 ### Headline
 
-| | macOS | Terminal route (`macmon` in Terminal.app) | MacMonBar, menu closed | MacMonBar, menu open |
+| | macOS | Terminal route (`macmon` in Terminal.app) | CoreBar, menu closed | CoreBar, menu open |
 |---|---|---|---|---|
 | Memory (footprint) | — | ≈ **75 MiB** | **≈ 13 MiB** (single process) | ≈ 20 MiB |
 | CPU | — | ≈ 0.62 % of a core | ≈ **0.26 %** of a core | ≈ 0.28 % of a core |
 | Incremental power | — | — | ≈ **2.3 mW** | ≈ 3.3 mW |
 
-MacMonBar is a **single process** — there is no `macmon pipe` child anymore (see
-[docs/macmon.md](../docs/macmon.md)). The 13 MiB figure is the whole app, GPU/temperature
+CoreBar is a **single process** — there is no `macmon pipe` child anymore (see
+[docs/macmon.md](macmon.md)). The 13 MiB figure is the whole app, GPU/temperature
 included. Measured head-to-head against the last two-process build (v0.2.9, same machine,
 same session, three 15-second runs each, 2 s default): **21.4 MiB → 12.9 MiB (−40 %)** and
 **0.392 % → 0.263 % of a core (−33 %)**, one process instead of two. Details in
 [v0.3.0: the subprocess is gone](#v030-the-subprocess-is-gone) below.
 
-Compared with keeping `macmon` in a Terminal window, MacMonBar uses about a **sixth of the
+Compared with keeping `macmon` in a Terminal window, CoreBar uses about a **sixth of the
 memory** (13 vs 75 MiB) at a fraction of the CPU, and carries **zero external dependencies**.
 
 ### v0.3.0: the subprocess is gone
 
 The last build that still shelled out to `macmon pipe` is **v0.2.9** (tag `v0.2.9`, shipped as
-`MacMonBar-0.2.9.app.zip`). Both builds were run side by side on this machine, same session,
+`CoreBar-0.2.9.app.zip`). Both builds were run side by side on this machine, same session,
 same tool (`tools/measure.swift`, `ri_phys_footprint` via `proc_pid_rusage`), 2 s default
 interval, menu closed, three 15-second runs each:
 
@@ -45,7 +45,7 @@ Per-process the new app does more than the old app *shell* did (0.263 % vs 0.164
 sampling work moved inside — but the **total** cost of ownership drops by a third, and the
 ~9 MiB child plus its failure modes (missing binary, parse churn, second process to
 supervise) disappear. Readout parity with `macmon` is verified sample-by-sample in
-[docs/macmon.md](../docs/macmon.md#readout-parity-with-macmon): temperatures are bit-identical,
+[docs/macmon.md](macmon.md#readout-parity-with-macmon): temperatures are bit-identical,
 GPU utilisation matches to within sampling-window jitter.
 
 ### Where the memory goes
@@ -53,8 +53,8 @@ GPU utilisation matches to within sampling-window jitter.
 | Route | Breakdown |
 |---|---|
 | Terminal | Terminal.app 72.2 MiB + `macmon` TUI 2.7 MiB |
-| MacMonBar, closed | **single process ≈ 13 MiB** (Swift runtime + AppKit + the C sensor module linked in) |
-| MacMonBar, open | ≈ 20 MiB (the +7.5 MiB is the menu window + panel backing store, created on first open) |
+| CoreBar, closed | **single process ≈ 13 MiB** (Swift runtime + AppKit + the C sensor module linked in) |
+| CoreBar, open | ≈ 20 MiB (the +7.5 MiB is the menu window + panel backing store, created on first open) |
 
 Opening the menu for the first time costs about **7.5 MiB** (bare-binary measurement 12.1 → 19.6 MiB): the menu window and the panel's backing store only exist once you click the icon. Opening it repeatedly costs nothing further. With the JSON-pipe `macmon` child gone there is no per-2-second parse churn, so long-running instances no longer creep upward from allocation fragmentation.
 
@@ -102,7 +102,7 @@ The app broken into removable blocks, each measured (menu closed, 1 s baseline �
 
 The open-menu increment (0.315 %) breaks down further: trend-chart data paths 0.130 %, per-core bars 0.022 %, menu event tracking and panel compositing 0.163 %.
 
-**GPU: 0.000 %.** MacMonBar is a pure AppKit 2D app, rasterized on the CPU, with panel compositing billed to WindowServer. "Reducing GPU usage" is not a thing that exists for this app.
+**GPU: 0.000 %.** CoreBar is a pure AppKit 2D app, rasterized on the CPU, with panel compositing billed to WindowServer. "Reducing GPU usage" is not a thing that exists for this app.
 
 ### Power
 
@@ -131,19 +131,19 @@ Run continuously for a year the two states come to ≈20 Wh and ≈29 Wh — abo
 
 ### 一句话结论
 
-| | macOS | 终端路线（Terminal.app 里跑 macmon） | MacMonBar 菜单收起 | MacMonBar 菜单展开 |
+| | macOS | 终端路线（Terminal.app 里跑 macmon） | CoreBar 菜单收起 | CoreBar 菜单展开 |
 |---|---|---|---|---|
 | 内存（footprint） | — | ≈ **75 MiB** | **≈ 13 MiB（单进程）** | ≈ 20 MiB |
 | CPU | — | ≈ 0.62% 单核 | ≈ **0.26%** 单核 | ≈ 0.28% 单核 |
 | 增量功耗 | — | — | ≈ **2.3 mW** | ≈ 3.3 mW |
 
-MacMonBar 现在是**单进程**——不再有 `macmon pipe` 子进程（见 [docs/macmon.md](../docs/macmon.md)）。13 MiB 是整份 App（含 GPU/温度）的占用。与最后一个双进程构建（v0.2.9）同机同场实测（同一工具、同一会话、2 秒默认、菜单收起、各三轮 15 秒）：**21.4 MiB → 12.9 MiB（−40%）**，**0.392% → 0.263% 单核（−33%）**，进程数 2 → 1。明细见下文[「v0.3.0：子进程没了」](#v030-子进程没了)。
+CoreBar 现在是**单进程**——不再有 `macmon pipe` 子进程（见 [docs/macmon.md](macmon.md)）。13 MiB 是整份 App（含 GPU/温度）的占用。与最后一个双进程构建（v0.2.9）同机同场实测（同一工具、同一会话、2 秒默认、菜单收起、各三轮 15 秒）：**21.4 MiB → 12.9 MiB（−40%）**，**0.392% → 0.263% 单核（−33%）**，进程数 2 → 1。明细见下文[「v0.3.0：子进程没了」](#v030-子进程没了)。
 
-相比把 macmon 挂在终端窗口里，MacMonBar 内存约为其**六分之一**（13 vs 75 MiB），CPU 只占零头，而且**零外部依赖**。
+相比把 macmon 挂在终端窗口里，CoreBar 内存约为其**六分之一**（13 vs 75 MiB），CPU 只占零头，而且**零外部依赖**。
 
 ### v0.3.0：子进程没了
 
-最后一个还在 shell 调 `macmon pipe` 的构建是 **v0.2.9**（tag `v0.2.9`，即随仓库分发的 `MacMonBar-0.2.9.app.zip`）。两个构建在同一台机器、同一时段、同一工具（`tools/measure.swift`，`proc_pid_rusage` 的 `ri_phys_footprint`）下并排跑，2 秒默认间隔、菜单收起、各三轮 15 秒：
+最后一个还在 shell 调 `macmon pipe` 的构建是 **v0.2.9**（tag `v0.2.9`，即随仓库分发的 `CoreBar-0.2.9.app.zip`）。两个构建在同一台机器、同一时段、同一工具（`tools/measure.swift`，`proc_pid_rusage` 的 `ri_phys_footprint`）下并排跑，2 秒默认间隔、菜单收起、各三轮 15 秒：
 
 | | v0.2.9（App + `macmon pipe` 子进程） | v0.3.0（单进程 + 原生 C 传感器） | 变化 |
 |---|---|---|---|
@@ -153,15 +153,15 @@ MacMonBar 现在是**单进程**——不再有 `macmon pipe` 子进程（见 [d
 | GPU / 温度来源 | `macmon` 子进程，JSON 走管道 | `src/sensors.c` 链接进 App | — |
 | 外部依赖 | 必须存在 Rust `macmon` 二进制 | 无 | — |
 
-单看主进程，新版比旧版的"外壳"做得更多（0.263% vs 0.164%）——采样工作搬进了进程内——但**总持有成本**降了三分之一，而且约 9 MiB 的子进程和它的一整串故障模式（二进制缺失、JSON 解析抖动、要多 supervising 一个进程）一起消失了。与 `macmon` 的读数一致性已逐样本验证，见 [docs/macmon.md](../docs/macmon.md#与-macmon-的读数一致性)：温度逐位相同，GPU 占用差异在采样窗口抖动范围内。
+单看主进程，新版比旧版的"外壳"做得更多（0.263% vs 0.164%）——采样工作搬进了进程内——但**总持有成本**降了三分之一，而且约 9 MiB 的子进程和它的一整串故障模式（二进制缺失、JSON 解析抖动、要多 supervising 一个进程）一起消失了。与 `macmon` 的读数一致性已逐样本验证，见 [docs/macmon.md](macmon.md#与-macmon-的读数一致性)：温度逐位相同，GPU 占用差异在采样窗口抖动范围内。
 
 ### 内存去哪了
 
 | 路线 | 拆解 |
 |---|---|
 | 终端 | Terminal.app 72.2 MiB + macmon TUI 2.7 MiB |
-| MacMonBar（收起） | **单进程 ≈ 13 MiB**（Swift 运行时 + AppKit + 链接进来的 C 传感器模块） |
-| MacMonBar（展开） | ≈ 20 MiB（那 +7.5 MiB 是菜单窗口 + 面板位图，首次展开才创建） |
+| CoreBar（收起） | **单进程 ≈ 13 MiB**（Swift 运行时 + AppKit + 链接进来的 C 传感器模块） |
+| CoreBar（展开） | ≈ 20 MiB（那 +7.5 MiB 是菜单窗口 + 面板位图，首次展开才创建） |
 
 首次展开菜单约多花 **7.5 MiB**（裸二进制实测 12.1 → 19.6 MiB）：菜单窗口和面板位图只有点开后才存在。反复展开不再增长。去掉了每 2 秒解析 JSON 的 `macmon` 管道子进程后，长时间运行不再因分配碎片缓慢增长。
 
@@ -203,7 +203,7 @@ MacMonBar 现在是**单进程**——不再有 `macmon pipe` 子进程（见 [d
 
 展开菜单的增量（0.315%）再拆：趋势图数据链路 0.130%、逐核柱 0.022%、菜单事件跟踪与面板合成 0.163%。
 
-**GPU：0.000%。** MacMonBar 是纯 AppKit 2D 应用，光栅化在 CPU 上完成，面板合成记在 WindowServer 头上。"降低 GPU 占用"这件事对它是伪命题。
+**GPU：0.000%。** CoreBar 是纯 AppKit 2D 应用，光栅化在 CPU 上完成，面板合成记在 WindowServer 头上。"降低 GPU 占用"这件事对它是伪命题。
 
 ### 功耗
 

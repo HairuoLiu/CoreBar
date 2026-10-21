@@ -68,7 +68,7 @@ func push(_ arr: inout [Double], _ v: Double) {
     if arr.count > 120 { arr.removeFirst() }
 }
 
-// 130 × 200ms = 26 秒，和原来读 macmon 管道的时长一致
+// 130 × 200ms = 26 秒
 for _ in 0..<130 {
     let s = sampler.sample()
     if let o = s.overall { curCpu = o }
@@ -124,12 +124,12 @@ for (sub, chinese) in [("", false), ("zh", true)] {
     let nc = PanelView()
     nc.cpu = curCpu; nc.cores = coreVals; nc.showCores = true
     nc.sensorsAvailable = false
-    renderPNG(nc, w: 300, h: nc.preferredHeight, scale: 2, dark: false, path: out("panel-no-macmon-light.png"))
+    renderPNG(nc, w: 300, h: nc.preferredHeight, scale: 2, dark: false, path: out("panel-degraded-light.png"))
 
     let nm = MeterView()
     nm.cpu = curCpu; nm.showTemp = false
     nm.sensorsAvailable = false
-    renderPNG(nm, w: nm.preferredWidth, h: 22, scale: 3, dark: false, path: out("statusbar-no-macmon-light.png"))
+    renderPNG(nm, w: nm.preferredWidth, h: 22, scale: 3, dark: false, path: out("statusbar-degraded-light.png"))
 }
 
 print(String(format: "rendered cpu=%.0f%% gpu=%.0f%% mem=%.0f%% temp=%.0fC cores=%d barW=%.0fpt",
@@ -160,7 +160,7 @@ if CommandLine.arguments.count > 1 {
     outdir = root + "/docs"
 }
 
-let tmp = fm.temporaryDirectory.appendingPathComponent("macmonbar-render-\(ProcessInfo.processInfo.processIdentifier)")
+let tmp = fm.temporaryDirectory.appendingPathComponent("corebar-render-\(ProcessInfo.processInfo.processIdentifier)")
 try? fm.removeItem(at: tmp)
 try? fm.createDirectory(at: tmp, withIntermediateDirectories: true)
 defer { try? fm.removeItem(at: tmp) }

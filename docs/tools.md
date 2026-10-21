@@ -51,7 +51,7 @@ Two gotchas were hard-won and are baked into the script:
 - Dynamic colours (`labelColor`, `secondaryLabelColor`) do **not** resolve against `view.appearance` during offscreen drawing unless the draw call happens inside `NSAppearance.performAsCurrentDrawingAppearance { }`. Without it, dark-mode labels come out almost black. (`NSGraphicsContext.appearance` does not exist in this SDK.)
 - `NSBitmapImageRep`'s `colorSpaceName` only accepts `.deviceRGB` / `.calibratedRGB` here — `.sRGB` is not a member.
 
-The `-no-macmon-` images are the same pipeline with `sensorsAvailable = false` — that is the real degraded state (what the user sees if the private APIs ever get locked down), not a hand-edited mock-up.
+The `-degraded-` images are the same pipeline with `sensorsAvailable = false` — that is the real degraded state (what the user sees if the private APIs ever get locked down), not a hand-edited mock-up.
 
 ---
 
@@ -104,4 +104,4 @@ swift tools/render_docs.swift          # 输出 docs/*.png 与 docs/zh/*.png
 - 离屏绘制时动态色（`labelColor`、`secondaryLabelColor`）**不会**按 `view.appearance` 解析，除非绘制发生在 `NSAppearance.performAsCurrentDrawingAppearance { }` 里。少了这一步，深色模式的文字会发黑。（这个 SDK 里根本没有 `NSGraphicsContext.appearance`。）
 - 这里的 `NSBitmapImageRep` 的 `colorSpaceName` 只接受 `.deviceRGB` / `.calibratedRGB`，`.sRGB` 不是成员。
 
-`-no-macmon-` 那两张是同一套流程，只是 `sensorsAvailable = false`——那是真实的降级状态（私有 API 被锁死时用户看到的样子），不是手改的示意图。
+`-degraded-` 那两张是同一套流程，只是 `sensorsAvailable = false`——那是真实的降级状态（私有 API 被锁死时用户看到的样子），不是手改的示意图。

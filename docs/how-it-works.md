@@ -15,10 +15,10 @@
         |-- Memory %        : Mach host_statistics64 (vm_statistics64)
         |
         |-- GPU %           : C bridge -> libIOReport  ("GPU Stats" residency -> scaled ratio)
-        |                       @_silgen_name("macmonbar_gpu_scaled_ratio")
+        |                       @_silgen_name("corebar_gpu_scaled_ratio")
         |
         `-- Temperature     : C bridge -> AppleSMC (flt keys) or IOHID thermal fallback
-                                @_silgen_name("macmonbar_cpu_temp_c" / "macmonbar_gpu_temp_c")
+                                @_silgen_name("corebar_cpu_temp_c" / "corebar_gpu_temp_c")
                                         |
                                         v
                           MeterView (status bar)  ->  PanelView (expanded panel)
@@ -35,7 +35,7 @@ The status bar is a custom `NSView` (`MeterView`) attached to the `NSStatusItem`
 
 macmon's `cpu_usage_pct` is a *frequency-weighted residency* metric — how much time a core spends at a given DVFS operating point — not "is the core busy". Under a 12-thread all-core load the two disagree by a factor of ~1.7:
 
-| Load | Mach `host_processor_info` (what MacMonBar uses) | macmon `cpu_usage_pct` |
+| Load | Mach `host_processor_info` (what CoreBar uses) | macmon `cpu_usage_pct` |
 |---|---|---|
 | idle | 21.4 % | — |
 | 4 busy threads | 44.6 % | — |
@@ -62,9 +62,9 @@ That one timer calls `tick()`, which samples CPU / memory (Mach) **and** GPU% / 
 |---|---|---|
 | CPU utilization | `CPUCoreSampler` → Mach `host_processor_info` (Apple API) | No |
 | Per-core utilization | same sampler | No |
-| GPU utilization | `macmonbar_gpu_scaled_ratio` → `libIOReport` (private, `dlopen`) | No — implemented in `src/sensors.c` |
+| GPU utilization | `corebar_gpu_scaled_ratio` → `libIOReport` (private, `dlopen`) | No — implemented in `src/sensors.c` |
 | Memory % | `MemorySampler` → Mach `host_statistics64` | No |
-| Temperature | `macmonbar_cpu_temp_c` / `macmonbar_gpu_temp_c` → AppleSMC / IOHID | No — implemented in `src/sensors.c` |
+| Temperature | `corebar_cpu_temp_c` / `corebar_gpu_temp_c` → AppleSMC / IOHID | No — implemented in `src/sensors.c` |
 
 ---
 
@@ -81,10 +81,10 @@ That one timer calls `tick()`, which samples CPU / memory (Mach) **and** GPU% / 
         |-- 内存 %       : Mach host_statistics64（vm_statistics64）
         |
         |-- GPU %        : C 桥接 → libIOReport（"GPU Stats" 驻留度 → scaled ratio）
-        |                   @_silgen_name("macmonbar_gpu_scaled_ratio")
+        |                   @_silgen_name("corebar_gpu_scaled_ratio")
         |
         `-- 温度         : C 桥接 → AppleSMC（flt 键）或 IOHID 温度回退
-                            @_silgen_name("macmonbar_cpu_temp_c" / "macmonbar_gpu_temp_c")
+                            @_silgen_name("corebar_cpu_temp_c" / "corebar_gpu_temp_c")
                                         |
                                         v
                           MeterView（状态栏）  ->  PanelView（展开面板）
@@ -100,7 +100,7 @@ GPU / 温度就画成 "—"；CPU / 内存照常工作。
 
 macmon 的 `cpu_usage_pct` 是**频率加权的驻留度**——核心在某个 DVFS 工作点上待了多久——而不是"核心忙不忙"。12 线程全核加载下两者差约 1.7 倍：
 
-| 负载 | Mach `host_processor_info`（MacMonBar 用这个） | macmon `cpu_usage_pct` |
+| 负载 | Mach `host_processor_info`（CoreBar 用这个） | macmon `cpu_usage_pct` |
 |---|---|---|
 | 空闲 | 21.4% | — |
 | 4 线程忙 | 44.6% | — |
@@ -127,6 +127,6 @@ RunLoop.main.add(t, forMode: .common)
 |---|---|---|
 | CPU 占用率 | `CPUCoreSampler` → Mach `host_processor_info`（Apple 公开 API） | 否 |
 | 逐核占用率 | 同上 | 否 |
-| GPU 占用率 | `macmonbar_gpu_scaled_ratio` → `libIOReport`（私有，dlopen） | 否——实现在 `src/sensors.c` |
+| GPU 占用率 | `corebar_gpu_scaled_ratio` → `libIOReport`（私有，dlopen） | 否——实现在 `src/sensors.c` |
 | 内存百分比 | `MemorySampler` → Mach `host_statistics64` | 否 |
-| 温度 | `macmonbar_cpu_temp_c` / `macmonbar_gpu_temp_c` → AppleSMC / IOHID | 否——实现在 `src/sensors.c` |
+| 温度 | `corebar_cpu_temp_c` / `corebar_gpu_temp_c` → AppleSMC / IOHID | 否——实现在 `src/sensors.c` |

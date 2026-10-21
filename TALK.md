@@ -168,9 +168,9 @@ Four things, and none of them are about Swift.
 
 **Four: minimalism is a measurement problem, not a taste problem.** I didn't make this app small by having good taste. I made it small by measuring what each part cost and deleting the parts whose cost bought me nothing — the wattage, the width chooser, the end-point dot on the chart, the 50 % reference line on a chart where 50 % means nothing. **You cannot delete with confidence until you have measured what you're deleting.**
 
-*[Slide: ≈13 MiB · 0.26 % · 2.3 mW · 1,361 lines · 0 dependencies]*
+*[Slide: ≈13 MiB · 0.26 % · 2.3 mW · 1,357 lines · 0 dependencies]*
 
-The app is 1,361 lines — 842 of Swift, 519 of C. No dependencies, no subprocess, no Python. About 13 megabytes, 0.26 % of a core, about 2.3 milliwatts — which, if you leave it running for a year, is 20 watt-hours. Roughly 0.07 % of one battery charge per day.
+The app is 1,357 lines — 809 of Swift, 515 of C, plus a 33-line header. No dependencies, no subprocess, no Python. About 13 megabytes, 0.26 % of a core, about 2.3 milliwatts — which, if you leave it running for a year, is 20 watt-hours. Roughly 0.07 % of one battery charge per day.
 
 I replaced a 75-megabyte window with that. But the thing I actually got out of it wasn't the memory. It was discovering, four separate times, that I had been confidently wrong — and that in three of those cases, **measurement, not intelligence, is what caught me.**
 

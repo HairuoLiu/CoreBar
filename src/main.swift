@@ -4,16 +4,16 @@ import Darwin
 
 // MARK: - 原生 C 传感器桥接（见 src/sensors.c / src/sensors.h）
 //
-// 替代 macmon 子进程：GPU 占用走 libIOReport，温度走 IOHID/AppleSMC，
+// GPU 占用走 libIOReport，温度走 IOHID/AppleSMC，
 // 都用 @_silgen_name 直接调 C，不经过任何子进程或 JSON 解析。
 // 第一次调用 gpu_scaled_ratio 是 prime（返回 0），之后每次取真实值。
-@_silgen_name("macmonbar_sensors_init")      func c_sensors_init() -> Int32
-@_silgen_name("macmonbar_sensors_close")     func c_sensors_close()
-@_silgen_name("macmonbar_gpu_scaled_ratio")  func c_gpu_ratio() -> Double
-@_silgen_name("macmonbar_cpu_temp_c")        func c_cpu_temp() -> Double
-@_silgen_name("macmonbar_gpu_temp_c")        func c_gpu_temp() -> Double
+@_silgen_name("corebar_sensors_init")      func c_sensors_init() -> Int32
+@_silgen_name("corebar_sensors_close")     func c_sensors_close()
+@_silgen_name("corebar_gpu_scaled_ratio")  func c_gpu_ratio() -> Double
+@_silgen_name("corebar_cpu_temp_c")        func c_cpu_temp() -> Double
+@_silgen_name("corebar_gpu_temp_c")        func c_gpu_temp() -> Double
 
-// MacMonBar — 菜单栏版 macmon
+// CoreBar — Apple Silicon 菜单栏监视器
 //
 // 状态栏：CPU / GPU / RAM 百分比 + 温度（默认关闭）；标签固定英文，菜单与面板按系统中英双语（见 Loc）
 // 面板：四项趋势图 2 × 2，底部逐核柱状图（可关）
@@ -265,7 +265,7 @@ final class MeterView: NSView {
         x = advanceAfter(x)
         x = metric(name: "GPU", ratio: gpu, available: sensorsAvailable, series: gpuSeriesColor(self), x: x)
         x = advanceAfter(x)
-        x = metric(name: "RAM", ratio: mem, available: true, series: memSeriesColor(self), x: x)  // 状态栏标签固定英文；内存为本机采样，不依赖 macmon
+        x = metric(name: "RAM", ratio: mem, available: true, series: memSeriesColor(self), x: x)  // 状态栏标签固定英文；内存为本机采样
         if showTemp {
             x = advanceAfter(x)
             let r = NSRect(x: x, y: 0, width: L.temp, height: bounds.height)
@@ -655,7 +655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         intervalItem.submenu = sub
         menu.addItem(intervalItem)
 
-        let quitItem = NSMenuItem(title: Loc.t("退出 MacMonBar", "Quit MacMonBar"), action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: Loc.t("退出 CoreBar", "Quit CoreBar"), action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 

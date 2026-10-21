@@ -1,8 +1,26 @@
 # Changelog
 
-All notable changes to MacMonBar. Versions are also tagged as GitHub releases.
+All notable changes to CoreBar. Versions are also tagged as GitHub releases.
 
 <!-- 每条记录先英文后中文；中文标题下为对应中文说明。 -->
+
+## 0.4.0 — 2026-10-20
+
+**EN**
+
+- **Renamed MacMonBar → CoreBar.** Since 0.3.0 the app has been a single process with its own C sensor module; it was no longer a front end for anything, but the name still said otherwise. Product name, bundle identifier (`local.corebar`), C API prefix (`corebar_*`), build output (`CoreBar.app`) and every document now say CoreBar. The repository moved to `HairuoLiu/CoreBar`; GitHub keeps the old URL redirecting, so existing links and `releases/latest` keep working.
+  - ⚠️ The copy in `/Applications` is **not** renamed for you: drag in the new `CoreBar.app` and delete `MacMonBar.app`. A Login Item points at the old path and has to be re-added once.
+- **Corrected the code-size figures** in both READMEs and both versions of the talk. They still read 842 lines of Swift plus a 519-line C module — measured before the menu cost column was removed. It is now 809 + 515, plus a 33-line header: 1,357 lines.
+- **Screenshots renamed** from `*-no-macmon-*.png` to `*-degraded-*.png`. Those two images show the sensors-unavailable state, not the old dependency.
+- **Credits reworded.** macmon is now described as where the GPU and temperature algorithms come from, and as the reference used to verify our readouts bit-for-bit — not as the thing this app wrapped.
+
+**中文**
+
+- **MacMonBar 更名为 CoreBar。** 从 0.3.0 起本 App 已经是单进程、自带 C 传感器模块，不再是任何东西的前端，但名字还在讲另一个故事。产品名、bundle 标识（`local.corebar`）、C API 前缀（`corebar_*`）、构建产物（`CoreBar.app`）与全部文档统一改为 CoreBar。仓库迁至 `HairuoLiu/CoreBar`，GitHub 保留旧链接重定向，已有链接与 `releases/latest` 不受影响。
+  - ⚠️ `/Applications` 里的旧 App **不会**自动改名：请拖入新的 `CoreBar.app` 并删除 `MacMonBar.app`。「登录项」指向旧路径，需要重新添加一次。
+- **修正代码行数。** 中英 README 与两份讲稿里写的 842 行 Swift + 519 行 C，是删掉菜单代价列之前的口径。现在为 809 + 515，外加 33 行头文件：共 1,357 行。
+- **截图改名：** `*-no-macmon-*.png` → `*-degraded-*.png`。这两张图拍的是传感器不可用时的降级状态，名字不该指向那个已经不存在的前依赖。
+- **致谢改写。** macmon 现在被描述为 GPU / 温度算法的来源，以及逐位校验读数的参照，而不是本 App 包装的对象。
 
 ## 0.3.1 — 2026-10-20
 

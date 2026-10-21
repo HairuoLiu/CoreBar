@@ -3,19 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>MacMonBar</string>
+    <string>CoreBar</string>
     <key>CFBundleDisplayName</key>
-    <string>MacMonBar</string>
+    <string>CoreBar</string>
     <key>CFBundleIdentifier</key>
-    <string>local.macmonbar</string>
+    <string>local.corebar</string>
     <key>CFBundleExecutable</key>
-    <string>MacMonBar</string>
+    <string>CoreBar</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.1</string>
+    <string>0.4.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>

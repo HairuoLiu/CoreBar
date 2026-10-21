@@ -2,8 +2,8 @@
 
 [← Back to README](../README.md) · [中文](#中文)
 
-> TL;DR — The GPU/温度 data used to come from a `macmon pipe` **child process** (Rust).
-> We replaced it with a **~500-line C module** (`src/sensors.c`) bridged into Swift.
+> TL;DR — The GPU and temperature data used to come from a `macmon pipe` **child process** (Rust).
+> We replaced it with a **515-line C module** (`src/sensors.c`) bridged into Swift.
 > Result: **one process instead of two**, footprint **21.4 MiB → 12.9 MiB (−40 %)**,
 > total CPU **0.392 % → 0.263 % of a core (−33 %)**, **zero external dependencies**,
 > **zero Python**. Readouts are **bit-identical to macmon** — verified sample-by-sample
@@ -85,7 +85,7 @@ Key points that make it safe and cheap:
   [Readout parity with macmon](#readout-parity-with-macmon) below.
 
 - **Bridged to Swift with zero overhead.** Five `@_silgen_name` C calls
-  (`macmonbar_sensors_init/close/gpu_scaled_ratio/cpu_temp_c/gpu_temp_c`). No
+  (`corebar_sensors_init/close/gpu_scaled_ratio/cpu_temp_c/gpu_temp_c`). No
   `Process`, no pipe, no `JSONSerialization`, no background queue.
 
 - **Graceful degradation preserved.** `c_sensors_init()` returns non-zero if neither
@@ -174,7 +174,7 @@ trivial to read, test standalone (`cc -DSTANDALONE_TEST`), and audit against mac
 ## 中文
 
 > TL;DR — GPU/温度数据以前来自一个 `macmon pipe` **子进程**（Rust）。我们把它换成了
-> 桥接进 Swift 的 **约 500 行 C 模块**（`src/sensors.c`）。结果：**两个进程变一个**，
+> 桥接进 Swift 的 **515 行 C 模块**（`src/sensors.c`）。结果：**两个进程变一个**，
 > footprint **21.4 MiB → 12.9 MiB（−40%）**，总 CPU **0.392% → 0.263% 单核（−33%）**，
 > **零外部依赖**、**零 Python**。读数与 macmon **逐位一致**——已在空闲、轻载、满载三种
 > 场景下逐样本验证（见[与 macmon 的读数一致性](#与-macmon-的读数一致性)）。
@@ -249,7 +249,7 @@ src/sensors.c  ──dlopen──>  /usr/lib/libIOReport.dylib
   逐样本验证，见下文[与 macmon 的读数一致性](#与-macmon-的读数一致性)。
 
 - **零开销桥接到 Swift。** 五个 `@_silgen_name` C 调用
-  （`macmonbar_sensors_init/close/gpu_scaled_ratio/cpu_temp_c/gpu_temp_c`）。没有
+  （`corebar_sensors_init/close/gpu_scaled_ratio/cpu_temp_c/gpu_temp_c`）。没有
   `Process`、没有管道、没有 `JSONSerialization`、没有后台队列。
 
 - **降级能力保留。** `c_sensors_init()` 在 GPU 与温度传感器都打不开时返回非 0。于是
