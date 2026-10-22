@@ -4,6 +4,26 @@ All notable changes to CoreBar. Versions are also tagged as GitHub releases.
 
 <!-- 每条记录先英文后中文；中文标题下为对应中文说明。 -->
 
+## 0.4.1 — 2026-10-21
+
+**EN**
+
+- **Full Intel Architecture Support (Universal Binary `arm64` + `x86_64`):**
+  - **Accurate Physical CPU Core Aggregation:** Aggregates hyperthreads into true physical hardware cores (`C0`–`C3` on quad-core i7) avoiding duplicate/misleading hyperthreaded gauges. Zero heap allocations in per-tick sampling.
+  - **Dual GPU Monitoring (IOKit IOAccelerator):** Supports discrete (AMD Radeon) and integrated (Intel HD Graphics) GPUs with dedicated metrics and hardware-level 500ms polling debouncing.
+  - **Intel SMC Fixed-Point Temperature:** Full `sp78` fixed-point decode for Intel CPU (`TCXC`, `TC0P`) and GPU (`TG0D`, `TG0P`) temperatures.
+  - **High-Performance Code Cleanup:** Streamlined C sensors and Swift UI pipeline to top engineering standards (zero redundant allocations, cached UI fonts, zero memory leaks).
+  - **Updated App Icon:** Latest high-resolution gradient squircle design.
+
+**中文**
+
+- **全面支持 Intel 架构（Universal Binary 通用双架构）：**
+  - **物理硬件核心精准聚合：** 自动聚合 Intel 超线程逻辑核为真实物理核心（如 i7 4核8线程精确显示 `C0`–`C3` 4 根柱子），杜绝虚假核心与重复显示；每帧采样零堆内存分配。
+  - **双显卡精准采样（IOKit IOAccelerator）：** 独立监测与显示 AMD 独显与 Intel 核显占用率，加入 500ms 硬件采样防抖。
+  - **Intel SMC 定点数温度解析：** 完整支持 `sp78` 格式读取 CPU (`TCXC`, `TC0P`) 与 GPU (`TG0D`, `TG0P`) 核心温度。
+  - **极致代码精简与性能优化：** 达到一线工程标准，消除所有冗余分配、缓存 UI 字体对象、零内存泄漏。
+  - **全新高分辨率图标：** 采用最新圆角灰阶渐变三条柱设计。
+
 ## 0.4.0 — 2026-10-21
 
 **EN**

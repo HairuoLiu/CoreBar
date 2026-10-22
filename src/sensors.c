@@ -16,12 +16,11 @@
 
 #include <dlfcn.h>
 #include <string.h>
-#include <strings.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <math.h>
 #include <unistd.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -60,10 +59,11 @@ static int                    g_gpuFreqCount = 0;
 // GPU 来源: 0 = 无, 1 = Apple Silicon IOReport (GPUPH), 2 = Intel IOAccelerator
 static int                    g_gpuSource = 0;
 
-// Intel 双显卡缓存
+// Intel 双显卡缓存与 500ms 防抖
 static double                 g_cachedDgpu = -1.0;
 static double                 g_cachedIgpu = -1.0;
 static int                    g_hasDualGpu = 0;
+static uint64_t               g_lastGpuPollTime = 0;
 
 // ---------------------------------------------------------------------------
 // SMC 基础结构与通用函数
@@ -87,11 +87,15 @@ typedef struct {
 #define SMC_FLT_TYPE  0x666C7420u   // "flt "
 #define SMC_SP78_TYPE 0x73703738u   // "sp78"
 
+typedef struct {
+    uint32_t key;
+    uint32_t type;
+} SMCSensor;
+
 static io_connect_t g_smc = 0;
-#define MAX_SENSORS 256
-static uint32_t g_cpuKeys[MAX_SENSORS]; static int g_cpuCount = 0;
-static uint32_t g_gpuKeys[MAX_SENSORS]; static int g_gpuCount = 0;
-static uint32_t g_keyDataTypes[MAX_SENSORS * 2];
+#define MAX_SENSORS 64
+static SMCSensor g_cpuSensors[MAX_SENSORS]; static int g_cpuCount = 0;
+static SMCSensor g_gpuSensors[MAX_SENSORS]; static int g_gpuCount = 0;
 
 // ---------------------------------------------------------------------------
 // IOHID thermal fallback
@@ -111,7 +115,7 @@ static HIDSvcEventFn g_hidEvent = NULL;
 static HIDEvFloatFn  g_hidFloat = NULL;
 static void         *g_hidClient = NULL;
 
-static int g_tempSource = 0;
+static int g_tempSource = 0; // 0 = 无, 1 = SMC, 2 = IOHID
 
 // ---------------------------------------------------------------------------
 // SMC 方法实现
@@ -218,11 +222,9 @@ static void smc_enumerate_temps(void) {
             double v = smc_read_temperature_val(key, dt, ds);
             if (v != v || v <= 0.0 || v > 150.0) continue;
             if (isCpu && g_cpuCount < MAX_SENSORS) {
-                g_keyDataTypes[g_cpuCount] = dt;
-                g_cpuKeys[g_cpuCount++] = key;
+                g_cpuSensors[g_cpuCount++] = (SMCSensor){ .key = key, .type = dt };
             } else if (isGpu && g_gpuCount < MAX_SENSORS) {
-                g_keyDataTypes[MAX_SENSORS + g_gpuCount] = dt;
-                g_gpuKeys[g_gpuCount++] = key;
+                g_gpuSensors[g_gpuCount++] = (SMCSensor){ .key = key, .type = dt };
             }
         }
     }
@@ -237,8 +239,7 @@ static void smc_enumerate_temps(void) {
             if (smc_key_info(key, &ds, &dt) == 0 && dt == SMC_SP78_TYPE) {
                 double v = smc_read_temperature_val(key, dt, ds);
                 if (v == v && v > 10.0 && v < 130.0 && g_cpuCount < MAX_SENSORS) {
-                    g_keyDataTypes[g_cpuCount] = dt;
-                    g_cpuKeys[g_cpuCount++] = key;
+                    g_cpuSensors[g_cpuCount++] = (SMCSensor){ .key = key, .type = dt };
                 }
             }
         }
@@ -253,20 +254,19 @@ static void smc_enumerate_temps(void) {
             if (smc_key_info(key, &ds, &dt) == 0 && dt == SMC_SP78_TYPE) {
                 double v = smc_read_temperature_val(key, dt, ds);
                 if (v == v && v > 10.0 && v < 130.0 && g_gpuCount < MAX_SENSORS) {
-                    g_keyDataTypes[MAX_SENSORS + g_gpuCount] = dt;
-                    g_gpuKeys[g_gpuCount++] = key;
+                    g_gpuSensors[g_gpuCount++] = (SMCSensor){ .key = key, .type = dt };
                 }
             }
         }
     }
 }
 
-static double smc_avg_temp(const uint32_t *keys, int n, int typeOffset) {
+static double smc_avg_temp(const SMCSensor *sensors, int n) {
     if (n == 0) return 0.0;
     double sum = 0; int got = 0;
     for (int i = 0; i < n; i++) {
-        uint32_t dt = g_keyDataTypes[typeOffset + i];
-        double v = smc_read_temperature_val(keys[i], dt, dt == SMC_SP78_TYPE ? 2 : 4);
+        uint32_t dt = sensors[i].type;
+        double v = smc_read_temperature_val(sensors[i].key, dt, dt == SMC_SP78_TYPE ? 2 : 4);
         if (v > 0.0 && v <= 150.0) { sum += v; got++; }
     }
     return got ? sum / (double)got : 0.0;
@@ -502,10 +502,19 @@ static double gpu_ratio_from_delta(CFTypeRef delta) {
 }
 
 // ---------------------------------------------------------------------------
-// 方案 2: Intel Mac 双显卡细化采样 (IOAccelerator PerformanceStatistics)
+// 方案 2: Intel Mac 双显卡细化采样 (带 500ms 硬件轮询防抖)
 // ---------------------------------------------------------------------------
 
 static void update_intel_gpus(void) {
+    uint64_t now = mach_absolute_time();
+    static mach_timebase_info_data_t tb;
+    if (tb.denom == 0) mach_timebase_info(&tb);
+    uint64_t elapsedNs = (now - g_lastGpuPollTime) * tb.numer / tb.denom;
+    if (g_lastGpuPollTime > 0 && elapsedNs < 500000000ULL) {
+        return; // 500ms 缓存内，避免同一 Tick 发生多次重复 IOKit 遍历
+    }
+    g_lastGpuPollTime = now;
+
     io_iterator_t it;
     if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &it) != kIOReturnSuccess)
         return;
@@ -571,7 +580,6 @@ int corebar_sensors_init(void) {
         g_gpuSource = 1;
         ok = 1;
     } else {
-        // Intel Mac
         io_iterator_t it;
         if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &it) == kIOReturnSuccess) {
             io_service_t svc = IOIteratorNext(it);
@@ -625,7 +633,7 @@ double corebar_gpu_scaled_ratio(void) {
 
 double corebar_dgpu_ratio(void) {
     if (g_gpuSource == 2) {
-        if (g_cachedDgpu < 0.0) update_intel_gpus();
+        update_intel_gpus();
         return g_cachedDgpu;
     }
     return -1.0;
@@ -633,7 +641,7 @@ double corebar_dgpu_ratio(void) {
 
 double corebar_igpu_ratio(void) {
     if (g_gpuSource == 2) {
-        if (g_cachedIgpu < 0.0) update_intel_gpus();
+        update_intel_gpus();
         return g_cachedIgpu;
     }
     return -1.0;
@@ -644,11 +652,11 @@ int corebar_has_dual_gpu(void) {
 }
 
 double corebar_cpu_temp_c(void) {
-    if (g_tempSource == 1) return smc_avg_temp(g_cpuKeys, g_cpuCount, 0);
+    if (g_tempSource == 1) return smc_avg_temp(g_cpuSensors, g_cpuCount);
     double cpu = 0, gpu = 0; iohid_temps(&cpu, &gpu); return cpu;
 }
 
 double corebar_gpu_temp_c(void) {
-    if (g_tempSource == 1) return smc_avg_temp(g_gpuKeys, g_gpuCount, MAX_SENSORS);
+    if (g_tempSource == 1) return smc_avg_temp(g_gpuSensors, g_gpuCount);
     double cpu = 0, gpu = 0; iohid_temps(&cpu, &gpu); return gpu;
 }

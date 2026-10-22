@@ -8,7 +8,7 @@ A hand-written app — 809 lines of Swift plus a 515-line C sensor module — wi
 
 > Formerly **MacMonBar**. Renamed in 0.4.0, after 0.3.0 removed the last thing that ever tied it to another project. Old links to the repository still redirect here.
 
-![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![C](https://img.shields.io/badge/C-sensor%20module-lightgrey) ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![License](https://img.shields.io/badge/license-MIT-green)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Universal](https://img.shields.io/badge/Apple%20Silicon%20%7C%20Intel-Universal-black) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![C](https://img.shields.io/badge/C-sensor%20module-lightgrey) ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![CoreBar expanded panel](docs/panel-light.png)
 
@@ -38,11 +38,11 @@ Measured, not estimated — `ri_phys_footprint` via `libproc`, CPU time over 15-
 
 ## Install
 
-Requires macOS 13+ on Apple Silicon. **Nothing else** — there is no companion binary to install.
+Requires macOS 13+ on Apple Silicon or Intel (`x86_64`). **Nothing else** — there is no companion binary to install.
 
 **Download** the latest release:
 
-**[→ Download CoreBar (macOS, Apple Silicon)](https://github.com/HairuoLiu/CoreBar/releases/latest)**
+**[→ Download CoreBar (macOS Universal: Apple Silicon & Intel)](https://github.com/HairuoLiu/CoreBar/releases/latest)**
 
 Unzip, drag `CoreBar.app` to `/Applications`, and open it. There is no Dock icon — look at your menu bar.
 

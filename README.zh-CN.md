@@ -8,7 +8,7 @@
 
 > 原名 **MacMonBar**。0.3.0 移除了最后一个与别的项目相关的东西之后，0.4.0 正式更名为 CoreBar。旧仓库链接仍会重定向到这里。
 
-![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![C](https://img.shields.io/badge/C-%E4%BC%A0%E6%84%9F%E5%99%A8%E6%A8%A1%E5%9D%97-lightgrey) ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![License](https://img.shields.io/badge/license-MIT-green)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Universal](https://img.shields.io/badge/Apple%20Silicon%20%7C%20Intel-%E5%8E%9F%E7%94%9F%E5%8F%8C%E6%9E%B6%E6%9E%84-black) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![C](https://img.shields.io/badge/C-%E4%BC%A0%E6%84%9F%E5%99%A8%E6%A8%A1%E5%9D%97-lightgrey) ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![CoreBar 展开面板](docs/zh/panel-light.png)
 
@@ -38,11 +38,11 @@
 
 ## 安装
 
-需要 macOS 13+ 与 Apple Silicon。**除此之外什么都不用装**——没有配套的第三方二进制。
+需要 macOS 13+，原生支持 Apple Silicon 与 Intel（`x86_64`）。**除此之外什么都不用装**——没有配套的第三方二进制。
 
 **直接下载**最新版本：
 
-**[→ 下载 CoreBar（macOS / Apple Silicon）](https://github.com/HairuoLiu/CoreBar/releases/latest)**
+**[→ 下载 CoreBar（macOS Universal 通用版）](https://github.com/HairuoLiu/CoreBar/releases/latest)**
 
 解压，把 `CoreBar.app` 拖进 `/Applications`，打开。没有 Dock 图标——去看菜单栏。
 

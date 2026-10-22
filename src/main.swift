@@ -14,7 +14,6 @@ import Darwin
 @_silgen_name("corebar_igpu_ratio")        func c_igpu_ratio() -> Double
 @_silgen_name("corebar_has_dual_gpu")      func c_has_dual_gpu() -> Int32
 @_silgen_name("corebar_cpu_temp_c")        func c_cpu_temp() -> Double
-@_silgen_name("corebar_gpu_temp_c")        func c_gpu_temp() -> Double
 
 // CoreBar — Apple Silicon 菜单栏监视器
 //
@@ -38,9 +37,12 @@ extension NSColor {
 
 private let kPad: CGFloat = 14          // 面板左右内边距，避免顶到边框
 private let kLabelSmall = NSFont.systemFont(ofSize: 11, weight: .medium)   // 面板图表标题
+private let kSubLabelSmall = NSFont.systemFont(ofSize: 10, weight: .medium) // 双显卡副标题
 private let kLabelBar = NSFont.systemFont(ofSize: 13, weight: .semibold)   // 状态栏标签：与系统菜单栏同字号（13pt），semibold 提分量
 private let kValue = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
 private let kRowTitle = NSFont.menuFont(ofSize: 0)   // 与原生菜单项同一号字，混排时不会一大一小
+private let kCoreTag = NSFont.systemFont(ofSize: 8, weight: .semibold)
+private let kCheckFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
 
 private func isDark(_ v: NSView) -> Bool {
     v.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -109,6 +111,11 @@ private enum Loc {
 // MARK: - 全核 CPU 采样（Mach）
 
 struct CPUCoreSampler {
+    struct CoreTicks {
+        var used: UInt64
+        var total: UInt64
+    }
+
     static let physicalCoreCount: Int = {
         var count: Int32 = 0
         var size = MemoryLayout<Int32>.size
@@ -120,10 +127,10 @@ struct CPUCoreSampler {
 
     private var prevUsed: UInt64 = 0
     private var prevTotal: UInt64 = 0
-    private var prevCore: [[UInt64]] = []
+    private var prevCore: [CoreTicks] = []
     var hasBaseline = false
 
-    private func readTicks() -> (used: UInt64, total: UInt64, cores: [[UInt64]])? {
+    private func readTicks() -> (used: UInt64, total: UInt64, cores: [CoreTicks])? {
         var cpuInfo: processor_info_array_t?
         var numCPUInfo: mach_msg_type_number_t = 0
         var numCPUs: natural_t = 0
@@ -136,17 +143,21 @@ struct CPUCoreSampler {
         }
         var used: UInt64 = 0
         var total: UInt64 = 0
-        var cores: [[UInt64]] = []
+        let n = Int(numCPUs)
+        var cores: [CoreTicks] = []
+        cores.reserveCapacity(n)
         let stride = Int(CPU_STATE_MAX)
-        for i in 0..<Int(numCPUs) {
+        for i in 0..<n {
             let b = i * stride
             let u = UInt64(UInt32(bitPattern: info[b + Int(CPU_STATE_USER)]))
             let s = UInt64(UInt32(bitPattern: info[b + Int(CPU_STATE_SYSTEM)]))
-            let n = UInt64(UInt32(bitPattern: info[b + Int(CPU_STATE_NICE)]))
+            let ni = UInt64(UInt32(bitPattern: info[b + Int(CPU_STATE_NICE)]))
             let idle = UInt64(UInt32(bitPattern: info[b + Int(CPU_STATE_IDLE)]))
-            used += u + s + n
-            total += u + s + n + idle
-            cores.append([u, s, n, idle])
+            let cUsed = u + s + ni
+            let cTotal = cUsed + idle
+            used += cUsed
+            total += cTotal
+            cores.append(CoreTicks(used: cUsed, total: cTotal))
         }
         return (used, total, cores)
     }
@@ -155,10 +166,13 @@ struct CPUCoreSampler {
         guard let t = readTicks() else { return (nil, []) }
         var rawCores: [Double] = []
         if hasBaseline, prevCore.count == t.cores.count {
-            rawCores = zip(prevCore, t.cores).map { a, b in
-                let du = (b[0] + b[1] + b[2]) - (a[0] + a[1] + a[2])
-                let dt = (b[0] + b[1] + b[2] + b[3]) - (a[0] + a[1] + a[2] + a[3])
-                return dt > 0 ? Double(du) / Double(dt) : 0
+            rawCores.reserveCapacity(t.cores.count)
+            for i in 0..<t.cores.count {
+                let a = prevCore[i]
+                let b = t.cores[i]
+                let du = b.used >= a.used ? b.used - a.used : 0
+                let dt = b.total >= a.total ? b.total - a.total : 0
+                rawCores.append(dt > 0 ? Double(du) / Double(dt) : 0)
             }
         }
         let dUsed = t.used >= prevUsed ? t.used - prevUsed : 0
@@ -175,12 +189,13 @@ struct CPUCoreSampler {
         guard dTotal > 0 else { return (nil, rawCores) }
 
         // 真实物理核心聚合：如果是超线程架构（如 8 逻辑核 / 4 物理核），
-        // 将对应每个物理核的超线程逻辑核心数据取平均，呈现真实的物理核负载。
+        // 将对应每个物理核的超线程逻辑核心数据取平均，呈现真实的物理核硬件负载。
         var perCore: [Double] = rawCores
         let physCount = Self.physicalCoreCount
         if !rawCores.isEmpty && rawCores.count > physCount && rawCores.count % physCount == 0 {
             let stride = rawCores.count / physCount
             var physList: [Double] = []
+            physList.reserveCapacity(physCount)
             for p in 0..<physCount {
                 var sum: Double = 0
                 for s in 0..<stride {
@@ -426,7 +441,7 @@ final class PanelView: NSView {
                        unit: String, ratio: Double, available: Bool, rect: NSRect) {
         let headRect = NSRect(x: rect.minX, y: rect.maxY - 15, width: rect.width, height: 15)
         if let s = sub {
-            drawText(s, in: headRect, font: NSFont.systemFont(ofSize: 10, weight: .medium), color: series)
+            drawText(s, in: headRect, font: kSubLabelSmall, color: series)
         } else {
             drawText(name, in: headRect, font: kLabelSmall, color: series)
         }
@@ -501,7 +516,7 @@ final class PanelView: NSView {
 
             // 标注物理核心号 Core 0..n
             let tagRect = NSRect(x: x - 2, y: rect.minY, width: bw + 4, height: labelH)
-            drawText("C\(i)", in: tagRect, font: NSFont.systemFont(ofSize: 8, weight: .semibold),
+            drawText("C\(i)", in: tagRect, font: kCoreTag,
                      color: NSColor.secondaryLabelColor, align: .center)
         }
     }
@@ -562,7 +577,7 @@ final class MenuRowView: NSView {
         }
 
         if item?.state == .on {
-            let c = line("✓", font: NSFont.systemFont(ofSize: 11, weight: .semibold), hot: hot)
+            let c = line("✓", font: kCheckFont, hot: hot)
             c.draw(at: NSPoint(x: 5, y: centerY(c)))
         }
 
