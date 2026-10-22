@@ -1,88 +1,104 @@
 #!/usr/bin/env swift
-// CoreBar 图标生成器：纯灰阶、精确几何，输出 1024×1024 PNG。
-//
-// 为什么用代码画而不是文生图：图标是几何产品——三条柱的比例、圆角、
-// 留白、1px 高光都必须可控，且 16px 下仍要认得出。美术方向来自生成的
-// 参考图（深炭底 + 白色柱 + 细基线），几何由这里决定。
-//
-// 用法: swiftc -O tools/make_icon.swift -o /tmp/make_icon && /tmp/make_icon <输出png>
+// CoreBar 图标生成器：同步上游最新设计的仪表盘网格、Sparkline 趋势线与状态指示点。
+// 输出 1024×1024 PNG 及 AppIcon.icns。
 
 import AppKit
 import Foundation
 
-let S: CGFloat = 1024          // 画布
-let tileInset: CGFloat = 100   // macOS 图标模板：824×824 的圆角方形居中
-let tile = NSRect(x: tileInset, y: tileInset, width: S - tileInset * 2, height: S - tileInset * 2)
-let radius: CGFloat = 185.4    // 824 对应的模板圆角
+let S: CGFloat = 1024
+let out = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "docs/app-icon.png"
 
-func gray(_ v: CGFloat, _ a: CGFloat = 1) -> NSColor { NSColor(srgbRed: v, green: v, blue: v, alpha: a) }
+func drawIcon(size: Int) -> NSImage {
+    let scale = CGFloat(size) / 1024
+    let canvasSize = CGSize(width: size, height: size)
+    let image = NSImage(size: canvasSize)
 
-let out = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "icon-1024.png"
+    image.lockFocus()
+    defer { image.unlockFocus() }
 
-let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(S), pixelsHigh: Int(S),
-                           bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                           colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-let ctx = NSGraphicsContext.current!.cgContext
+    NSColor.clear.setFill()
+    CGRect(origin: .zero, size: canvasSize).fill()
 
-// ── 圆角方形：深炭渐变 + 顶部 1px 高光 ─────────────────────────────
-let squircle = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
+    func rect(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat) -> CGRect {
+        CGRect(x: x * scale, y: y * scale, width: width * scale, height: height * scale)
+    }
 
-// 投影：贴着底部的柔和暗影，让图标从菜单栏/访达背景里浮起来
-ctx.saveGState()
-let shadow = NSShadow()
-shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
-shadow.shadowBlurRadius = 28
-shadow.shadowOffset = NSSize(width: 0, height: -10)
-shadow.set()
-gray(0.06).setFill()
-squircle.fill()
-ctx.restoreGState()
+    let outerRect = rect(96, 96, 832, 832)
+    let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 196 * scale, yRadius: 196 * scale)
+    NSColor(red: 0.025, green: 0.027, blue: 0.03, alpha: 1).setFill()
+    outerPath.fill()
 
-ctx.saveGState()
-squircle.addClip()
-let bg = NSGradient(starting: gray(0.235), ending: gray(0.035))!   // #3C3C3C → #090909
-bg.draw(in: tile, angle: -90)
-// 顶部内高光，模拟苹果图标那层很浅的顶光
-gray(1.0, 0.10).setFill()
-NSRect(x: tile.minX, y: tile.maxY - 3, width: tile.width, height: 3).fill()
-ctx.restoreGState()
+    let borderPath = NSBezierPath(roundedRect: outerRect.insetBy(dx: 10 * scale, dy: 10 * scale), xRadius: 184 * scale, yRadius: 184 * scale)
+    NSColor.white.withAlphaComponent(0.12).setStroke()
+    borderPath.lineWidth = max(1, 8 * scale)
+    borderPath.stroke()
 
-// 一圈极细的内描边，避免深色底在深色背景上糊掉
-gray(1.0, 0.07).setStroke()
-squircle.lineWidth = 2
-squircle.stroke()
+    let panelRect = rect(176, 236, 672, 552)
+    let panelPath = NSBezierPath(roundedRect: panelRect, xRadius: 104 * scale, yRadius: 104 * scale)
+    NSColor(red: 0.075, green: 0.078, blue: 0.082, alpha: 1).setFill()
+    panelPath.fill()
 
-// ── 三条柱：CPU / GPU / RAM ─────────────────────────────────────
-// 宽 108、间距 48 → 整组 420，视觉重心居中
-let barW: CGFloat = 108
-let gap: CGFloat = 48
-let groupW = barW * 3 + gap * 2
-let groupX = (S - groupW) / 2
-let baselineY: CGFloat = 340        // 基线
-let barBottom: CGFloat = baselineY + 22
-let heights: [CGFloat] = [160, 256, 356]   // 由低到高，读起来像"占用率"
+    // 绘制参考刻度网格
+    NSColor.white.withAlphaComponent(0.09).setStroke()
+    for y in [348, 512, 676] as [CGFloat] {
+        let path = NSBezierPath()
+        path.move(to: CGPoint(x: panelRect.minX + 52 * scale, y: y * scale))
+        path.line(to: CGPoint(x: panelRect.maxX - 52 * scale, y: y * scale))
+        path.lineWidth = max(1, 5 * scale)
+        path.lineCapStyle = .round
+        path.stroke()
+    }
 
-for (i, h) in heights.enumerated() {
-    let x = groupX + CGFloat(i) * (barW + gap)
-    let r = NSRect(x: x, y: barBottom, width: barW, height: h)
-    let p = NSBezierPath(roundedRect: r, xRadius: 28, yRadius: 28)
-    ctx.saveGState()
-    p.addClip()
-    // 每根柱都用同一条竖向渐变：顶部纯白，底部浅灰
-    let g = NSGradient(starting: gray(1.0), ending: gray(0.78))!
-    g.draw(in: r, angle: -90)
-    ctx.restoreGState()
+    // 绘制绿色 Sparkline
+    let greenPoints = [
+        CGPoint(x: 220, y: 552), CGPoint(x: 282, y: 540), CGPoint(x: 334, y: 560),
+        CGPoint(x: 382, y: 500), CGPoint(x: 432, y: 622), CGPoint(x: 490, y: 420),
+        CGPoint(x: 552, y: 604), CGPoint(x: 618, y: 490), CGPoint(x: 700, y: 532),
+        CGPoint(x: 800, y: 492)
+    ]
+    drawSparkline(points: greenPoints, color: NSColor.systemGreen, lineWidth: 34 * scale, scale: scale)
+
+    // 绘制青色 Sparkline
+    let cyanPoints = [
+        CGPoint(x: 224, y: 664), CGPoint(x: 312, y: 686), CGPoint(x: 402, y: 672),
+        CGPoint(x: 492, y: 698), CGPoint(x: 590, y: 646), CGPoint(x: 704, y: 674),
+        CGPoint(x: 798, y: 650)
+    ]
+    drawSparkline(points: cyanPoints, color: NSColor.systemCyan.withAlphaComponent(0.88), lineWidth: 20 * scale, scale: scale)
+
+    // 绘制底部状态三色指示灯
+    let dots: [(NSColor, CGRect)] = [
+        (.systemGreen, CGRect(x: 256, y: 276, width: 42, height: 42)),
+        (.systemPurple, CGRect(x: 330, y: 276, width: 42, height: 42)),
+        (.systemBlue, CGRect(x: 404, y: 276, width: 42, height: 42))
+    ]
+    for (color, r) in dots {
+        let scaledRect = CGRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
+        color.withAlphaComponent(0.94).setFill()
+        NSBezierPath(ovalIn: scaledRect).fill()
+    }
+
+    return image
 }
 
-// ── 基线：与柱组等宽的细线 ─────────────────────────────────────
-gray(0.62, 0.75).setFill()
-NSBezierPath(roundedRect: NSRect(x: groupX, y: baselineY, width: groupW, height: 5),
-             xRadius: 2.5, yRadius: 2.5).fill()
+func drawSparkline(points: [CGPoint], color: NSColor, lineWidth: CGFloat, scale: CGFloat) {
+    let path = NSBezierPath()
+    path.lineCapStyle = .round
+    path.lineJoinStyle = .round
+    for (i, p) in points.enumerated() {
+        let sp = CGPoint(x: p.x * scale, y: p.y * scale)
+        if i == 0 { path.move(to: sp) } else { path.line(to: sp) }
+    }
+    color.setStroke()
+    path.lineWidth = max(1, lineWidth)
+    path.stroke()
+}
 
-NSGraphicsContext.restoreGraphicsState()
-
-let png = rep.representation(using: .png, properties: [:])!
-try! png.write(to: URL(fileURLWithPath: out))
-print("已生成 \(out)  \(Int(S))×\(Int(S))")
+let image1024 = drawIcon(size: 1024)
+guard let tiff = image1024.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiff),
+      let png = bitmap.representation(using: .png, properties: [:]) else {
+    fatalError("PNG 导出失败")
+}
+try png.write(to: URL(fileURLWithPath: out))
+print("已成功生成最新图标: \(out)")
