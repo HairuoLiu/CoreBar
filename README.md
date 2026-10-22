@@ -43,6 +43,7 @@ Requires macOS 13+ on Apple Silicon or Intel (`x86_64`). **Nothing else** — th
 **Download** the latest release:
 
 **[→ Download CoreBar (macOS Universal: Apple Silicon & Intel)](https://github.com/HairuoLiu/CoreBar/releases/latest)**
+**[→ Download CoreBar Intel DMG (Dedicated x86_64)](https://github.com/HairuoLiu/CoreBar/raw/main/CoreBar-v0.4.2-intel-x86_64.dmg)**
 
 Unzip, drag `CoreBar.app` to `/Applications`, and open it. There is no Dock icon — look at your menu bar.
 
