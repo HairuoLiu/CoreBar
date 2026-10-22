@@ -43,7 +43,7 @@
 **直接下载**最新版本：
 
 **[→ 下载 CoreBar（macOS Universal 通用版）](https://github.com/HairuoLiu/CoreBar/releases/latest)**
-**[→ 下载 CoreBar Intel DMG 专用安装镜像（x86_64）](https://github.com/HairuoLiu/CoreBar/raw/main/CoreBar-v0.4.2-intel-x86_64.dmg)**
+**[→ 下载 CoreBar Intel DMG 专用安装镜像（x86_64）](https://github.com/HairuoLiu/CoreBar/releases/download/v0.4.2/CoreBar-v0.4.2-intel-x86_64.dmg)**
 
 解压，把 `CoreBar.app` 拖进 `/Applications`，打开。没有 Dock 图标——去看菜单栏。
 

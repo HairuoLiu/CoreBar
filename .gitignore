@@ -1,6 +1,7 @@
 # 构建产物
 CoreBar.app/
-CoreBar-*.app.zip
+*.dmg
+*.zip
 *.o
 *.dSYM/
 *.dylib
