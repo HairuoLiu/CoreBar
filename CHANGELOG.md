@@ -4,6 +4,16 @@ All notable changes to CoreBar. Versions are also tagged as GitHub releases.
 
 <!-- 每条记录先英文后中文；中文标题下为对应中文说明。 -->
 
+## 0.4.2 — 2026-10-21
+
+**EN**
+
+- **New app icon.** Replaced the previous (three-bar / dashboard-sparkline) mark with **"menu bar · light beam"**: a frosted squircle with a lit menu bar across the top, one glowing status item, and a beam of light pouring from the bar into the darkened screen, pooling at the bottom. It reads as a *menu-bar* monitor at a glance and stays legible at 16 px. The icon is now drawn entirely in code (`tools/make_icon.swift`), with a one-command pipeline `tools/make_icon.sh` (render 1024 → `.iconset` → `AppIcon.icns` → `docs/app-icon.png`). Built on top of 0.4.1 (Intel / Universal Binary).
+
+**中文**
+
+- **全新 App 图标。** 把上一版的「三条柱 / 仪表盘 sparkline」换成「**菜单栏 · 光柱**」：磨砂圆角方块，顶部一条亮起的菜单栏、栏里一枚点亮的读数项，光从栏底倾泻进暗屏、在底部汇成一摊柔光。它一眼就能看出是「菜单栏监视器」，缩到 16px 仍认得出。全部用代码绘制（`tools/make_icon.swift`），配套一条命令的流程 `tools/make_icon.sh`（渲染 1024 → `.iconset` → `AppIcon.icns` → `docs/app-icon.png`）。基于 0.4.1（Intel / Universal Binary）之上。
+
 ## 0.4.1 — 2026-10-21
 
 **EN**
